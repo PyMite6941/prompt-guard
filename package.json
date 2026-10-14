@@ -1,0 +1,29 @@
+{
+	"name": "prompt-guard",
+	"version": "1.0.0",
+	"description": "Scan prompts for personally identifiable information and prompt-injection attempts.",
+	"main": "./dist/scanner.js",
+	"types": "./dist/scanner.d.ts",
+	"files": ["dist/", "examples/", "LICENSE", "README.md"],
+	"bin": {
+		"prompt-guard": "./dist/cli.js"
+	},
+	"scripts": {
+		"prepare": "npm run build",
+		"build": "tsc",
+		"test": "vitest run",
+		"dev": "vitest"
+	},
+	"keywords": ["prompt-security", "pii", "prompt-injection", "scanner"],
+	"license": "MIT",
+	"type": "commonjs",
+	"devDependencies": {
+		"@types/node": "^26.6.5",
+		"typescript": "^7.0.2",
+		"vitest": "^5.0.4"
+	},
+	"dependencies": {
+		"fs": "^0.0.1-security",
+		"openai": "^7.33.0"
+	}
+}
