@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#101827">
+    <meta name="description" content="Prompt Guard scans AI prompts for common PII and prompt-injection patterns before they reach your model.">
+    <title>Prompt Guard — safer prompts, locally</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        background: #101827;
+        color: #edf2f7;
+        font-synthesis: none;
+        text-rendering: optimizeLegibility;
+        --muted: #a9b6c8;
+        --line: #28374c;
+        --accent: #73e0bd;
+      }
+
+      * { box-sizing: border-box; }
+      body { margin: 0; min-width: 320px; }
+      a { color: inherit; }
+      .wrap { width: min(1080px, calc(100% - 40px)); margin: 0 auto; }
+      header { padding: 24px 0; border-bottom: 1px solid var(--line); }
+      nav { display: flex; align-items: center; justify-content: space-between; gap: 20px; }
+      .brand { font-size: 1.05rem; font-weight: 750; letter-spacing: -.03em; text-decoration: none; }
+      .nav-links { display: flex; gap: 22px; color: var(--muted); font-size: .92rem; }
+      .nav-links a { text-decoration: none; }
+      .nav-links a:hover { color: var(--accent); }
+      main { padding: 76px 0 64px; }
+      .hero { max-width: 780px; }
+      .eyebrow { color: var(--accent); font-size: .78rem; font-weight: 750; letter-spacing: .13em; text-transform: uppercase; }
+      h1 { margin: 18px 0; max-width: 760px; font-size: clamp(2.7rem, 7vw, 5.5rem); line-height: .99; letter-spacing: -.065em; }
+      .lead { max-width: 650px; color: var(--muted); font-size: clamp(1.05rem, 2vw, 1.25rem); line-height: 1.7; }
+      .actions { display: flex; flex-wrap: wrap; gap: 12px; margin: 30px 0 0; }
+      .button { display: inline-block; padding: 12px 17px; border: 1px solid var(--line); border-radius: 8px; font-weight: 700; text-decoration: none; }
+      .button-primary { border-color: var(--accent); background: var(--accent); color: #10231f; }
+      .button:hover { transform: translateY(-1px); }
+      .code-card { margin-top: 48px; overflow: hidden; border: 1px solid var(--line); border-radius: 12px; background: #0b1220; }
+      .code-top { padding: 12px 16px; border-bottom: 1px solid var(--line); color: var(--muted); font-size: .82rem; }
+      pre { margin: 0; overflow-x: auto; padding: 22px; color: #d9e5f2; font: .92rem/1.8 ui-monospace, SFMono-Regular, Consolas, monospace; }
+      .prompt { color: var(--accent); }
+      section { padding: 48px 0; border-top: 1px solid var(--line); }
+      h2 { margin: 0 0 12px; font-size: 1.7rem; letter-spacing: -.035em; }
+      .section-lead { max-width: 670px; margin: 0 0 24px; color: var(--muted); line-height: 1.65; }
+      .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+      .feature { padding: 20px; border: 1px solid var(--line); border-radius: 10px; background: #131f30; }
+      .feature h3 { margin: 0 0 9px; font-size: 1rem; }
+      .feature p { margin: 0; color: var(--muted); font-size: .92rem; line-height: 1.6; }
+      .note { max-width: 780px; color: var(--muted); font-size: .9rem; line-height: 1.6; }
+      footer { padding: 24px 0 34px; border-top: 1px solid var(--line); color: var(--muted); font-size: .88rem; }
+      footer .wrap { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 12px; }
+      @media (max-width: 700px) {
+        main { padding-top: 55px; }
+        .grid { grid-template-columns: 1fr; }
+        .nav-links { gap: 13px; font-size: .85rem; }
+        .wrap { width: min(100% - 32px, 1080px); }
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <nav class="wrap" aria-label="Main navigation">
+        <a class="brand" href="./">Prompt Guard</a>
+        <div class="nav-links">
+          <a href="#features">Features</a>
+          <a href="#quick-start">Quick start</a>
+          <a href="https://github.com/PyMite6941/prompt-guard">GitHub</a>
+        </div>
+      </nav>
+    </header>
+
+    <main class="wrap">
+      <div class="hero">
+        <div class="eyebrow">Local-first prompt scanning</div>
+        <h1>Catch sensitive data before it reaches your AI.</h1>
+        <p class="lead">Prompt Guard checks text for common personally identifiable information and prompt-injection patterns, right in your application or from the command line.</p>
+        <div class="actions">
+          <a class="button button-primary" href="#quick-start">Get started</a>
+          <a class="button" href="https://github.com/PyMite6941/prompt-guard">View on GitHub</a>
+          <a class="button" href="https://www.npmjs.com/package/@ai-clyde/promptguard">npm package</a>
+        </div>
+      </div>
+
+      <div class="code-card" aria-label="Command line example">
+        <div class="code-top">Scan a prompt file</div>
+        <pre><span class="prompt">$</span> npx @ai-clyde/promptguard examples/clean.txt
+✅ Text is clean and safe.
+
+<span class="prompt">$</span> npx @ai-clyde/promptguard examples/leak.txt
+🚨 Security risk detected!</pre>
+      </div>
+    </main>
+
+    <section id="features">
+      <div class="wrap">
+        <h2>A practical first line of defense</h2>
+        <p class="section-lead">Run checks before submitting prompts to a model. Scanning happens locally; prompt content is not sent to an external service by Prompt Guard.</p>
+        <div class="grid">
+          <article class="feature">
+            <h3>Find common PII</h3>
+            <p>Detect email addresses, credit-card-shaped numbers, API-key formats, IP addresses, and phone-number-shaped strings.</p>
+          </article>
+          <article class="feature">
+            <h3>Flag injection phrases</h3>
+            <p>Identify common prompt-injection language, including attempts to ignore previous instructions or expose a system prompt.</p>
+          </article>
+          <article class="feature">
+            <h3>Redact before use</h3>
+            <p>Get a sanitized preview with detected PII replaced by redaction markers, or block a request based on its matches.</p>
+          </article>
+        </div>
+        <p class="note">Pattern-based scanning is best-effort, can produce false positives or miss novel formats, and is not a substitute for application-specific security controls. Injection phrases are reported but not removed from the sanitized text.</p>
+      </div>
+    </section>
+
+    <section id="quick-start">
+      <div class="wrap">
+        <h2>Quick start</h2>
+        <p class="section-lead">Install the CLI or use the scanner directly from TypeScript.</p>
+        <div class="grid">
+          <article class="feature">
+            <h3>Install</h3>
+            <pre>npm install @ai-clyde/promptguard</pre>
+          </article>
+          <article class="feature">
+            <h3>Scan with the CLI</h3>
+            <pre>npx @ai-clyde/promptguard prompt.txt</pre>
+          </article>
+          <article class="feature">
+            <h3>Use in your app</h3>
+            <pre>import { scanText } from '@ai-clyde/promptguard';
+const result = scanText(prompt);</pre>
+          </article>
+        </div>
+        <p class="note">See the <a href="https://github.com/PyMite6941/prompt-guard#readme">README</a> for API details, options, and development instructions.</p>
+      </div>
+    </section>
+
+    <footer>
+      <div class="wrap">
+        <span>Prompt Guard · MIT License</span>
+        <span><a href="https://github.com/PyMite6941/prompt-guard">Source on GitHub</a></span>
+      </div>
+    </footer>
+  </body>
+</html>
