@@ -7,13 +7,15 @@ personally identifiable information (PII) and prompt-injection phrases in
 prompts before you pass them to an AI model. It can also redact detected PII
 from a sanitized preview.
 
-The scanner runs locally and does not send text to an external service.
+The `scanText` scanner runs locally and does not send text to an external
+service. The optional `callAIGuarded` helper sends accepted prompts to OpenAI.
 
 ## What it detects
 
 - Email addresses
-- Credit-card-shaped numbers
-- API keys matching common OpenAI (`sk-...`) and AWS (`AKIA...`) formats
+- 13–19 digit credit-card-shaped numbers
+- API keys matching common OpenAI (`sk-...`, including `sk-proj-...`) and AWS
+  (`AKIA...`) formats
 - IPv4-shaped addresses
 - Phone-number-shaped strings
 - Prompt-injection phrases such as “ignore previous instructions”
@@ -49,6 +51,9 @@ To install the published package from npm, use:
 npm install -g @ai-clyde/promptguard
 ```
 
+The scoped package has not been published yet. Until it is available, install
+from this repository with the local steps above.
+
 ## CLI usage
 
 After linking or installing, scan a text file:
@@ -58,7 +63,7 @@ prompt-guard examples/clean.txt
 prompt-guard examples/leak.txt
 ```
 
-When the package is published to npm, the same command can be run with npx:
+After the package is published to npm, the same command can be run with npx:
 
 ```sh
 npx @ai-clyde/promptguard examples/clean.txt
@@ -101,7 +106,24 @@ if (!result.isSafe) {
 - `sanitizedText`: input with detected PII replaced by redaction markers.
 
 Injection phrases are included in `matches` but are not redacted from
-`sanitizedText`. Handle them according to your application's policy.
+`sanitizedText`. Handle them according to your application's policy. The
+`callAIGuarded` helper blocks prompts with detected injection phrases even when
+`autoSanitize` is enabled; that option only redacts PII.
+
+## Guarded OpenAI calls
+
+The optional `callAIGuarded` helper checks and sends a prompt to OpenAI. Set
+`OPENAI_API_KEY` in the environment before importing or calling it:
+
+```ts
+import { callAIGuarded } from './dist/ai';
+
+const answer = await callAIGuarded(userPrompt, { autoSanitize: true });
+```
+
+With `autoSanitize: true`, detected PII is redacted before sending. Prompt
+injection detections always block the request; they are not safe to auto-remove
+with the current pattern-based scanner.
 
 ## Development
 

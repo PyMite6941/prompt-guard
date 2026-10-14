@@ -13,7 +13,7 @@ const ignoreList = ignoreArg
 
 if (!filePath) {
 	console.error('Error: Please provide a file path to scan.');
-	console.error('Usage: npx pii-guard <file-path> [--ignore=email,apiKey]');
+	console.error('Usage: prompt-guard <file-path> [--ignore=email,apiKey]');
 	process.exit(1);
 }
 

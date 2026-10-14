@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="theme-color" content="#101827">
     <meta name="description" content="Prompt Guard scans AI prompts for common PII and prompt-injection patterns before they reach your model.">
+    <link rel="icon" type="image/svg+xml" href="./favicon.svg">
     <title>Prompt Guard — safer prompts, locally</title>
     <style>
       :root {
@@ -80,16 +81,16 @@
         <div class="actions">
           <a class="button button-primary" href="#quick-start">Get started</a>
           <a class="button" href="https://github.com/PyMite6941/prompt-guard">View on GitHub</a>
-          <a class="button" href="https://www.npmjs.com/package/@ai-clyde/promptguard">npm package</a>
+          <a class="button" href="https://github.com/PyMite6941/prompt-guard">Source code</a>
         </div>
       </div>
 
       <div class="code-card" aria-label="Command line example">
         <div class="code-top">Scan a prompt file</div>
-        <pre><span class="prompt">$</span> npx @ai-clyde/promptguard examples/clean.txt
+        <pre><span class="prompt">$</span> prompt-guard examples/clean.txt
 ✅ Text is clean and safe.
 
-<span class="prompt">$</span> npx @ai-clyde/promptguard examples/leak.txt
+<span class="prompt">$</span> prompt-guard examples/leak.txt
 🚨 Security risk detected!</pre>
       </div>
     </main>
@@ -119,19 +120,23 @@
     <section id="quick-start">
       <div class="wrap">
         <h2>Quick start</h2>
-        <p class="section-lead">Install the CLI or use the scanner directly from TypeScript.</p>
+        <p class="section-lead">The npm package is not published yet. Clone the repository to try the CLI, or use the scanner from TypeScript in the project.</p>
         <div class="grid">
           <article class="feature">
-            <h3>Install</h3>
-            <pre>npm install @ai-clyde/promptguard</pre>
+            <h3>Get the source</h3>
+            <pre>git clone https://github.com/PyMite6941/prompt-guard.git
+cd prompt-guard
+npm install
+npm run build</pre>
           </article>
           <article class="feature">
-            <h3>Scan with the CLI</h3>
-            <pre>npx @ai-clyde/promptguard prompt.txt</pre>
+            <h3>Link and scan</h3>
+            <pre>npm link
+prompt-guard examples/clean.txt</pre>
           </article>
           <article class="feature">
             <h3>Use in your app</h3>
-            <pre>import { scanText } from '@ai-clyde/promptguard';
+            <pre>import { scanText } from './dist/scanner';
 const result = scanText(prompt);</pre>
           </article>
         </div>

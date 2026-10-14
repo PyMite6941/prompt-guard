@@ -6,7 +6,7 @@ const openai = new OpenAI();
 
 export interface SafePromptOptions {
 	model?: string;
-	autoSanitize?: boolean; // If true, replaces PII instead of throwing an error
+	autoSanitize?: boolean; // If true, replaces PII but still blocks prompt injection
 }
 
 export async function callAIGuarded(
@@ -22,8 +22,12 @@ export async function callAIGuarded(
 	let promptToSend = userPrompt;
 
 	if (!scanResult.isSafe) {
+		if (scanResult.matches.some((match) => match.type === 'prompt_injection')) {
+			throw new Error('Security Violation Blocked: Prompt injection detected');
+		}
+
 		if (autoSanitize) {
-			console.warn('⚠️ PII or injection detected. Using sanitized text.');
+			console.warn('⚠️ PII detected. Using sanitized text.');
 			promptToSend = scanResult.sanitizedText;
 		} else {
 			throw new Error(

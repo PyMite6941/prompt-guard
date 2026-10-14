@@ -45,4 +45,37 @@ describe('PII and Prompt Guard Scanner', () => {
 		expect(result.isSafe).toBe(true);
 		expect(result.matches).toEqual([]);
 	});
+
+	it('should redact international phone numbers in full', () => {
+		const input = 'Call +1 (415) 555-2671 for help.';
+		const result = scanText(input);
+
+		expect(result.matches).toContainEqual({
+			type: 'phoneNumber',
+			value: '+1 (415) 555-2671',
+		});
+		expect(result.sanitizedText).toBe('Call [REDACTED_PHONENUMBER] for help.');
+	});
+
+	it('should detect and redact 15-digit credit-card-shaped numbers', () => {
+		const input = 'Test card: 378282246310005.';
+		const result = scanText(input);
+
+		expect(result.matches).toContainEqual({
+			type: 'creditCard',
+			value: '378282246310005',
+		});
+		expect(result.sanitizedText).toBe('Test card: [REDACTED_CREDITCARD].');
+	});
+
+	it('should detect and redact project-prefixed API keys', () => {
+		const input = 'Token: sk-proj-12345678901234567890_abc';
+		const result = scanText(input);
+
+		expect(result.matches).toContainEqual({
+			type: 'apiKey',
+			value: 'sk-proj-12345678901234567890_abc',
+		});
+		expect(result.sanitizedText).toBe('Token: [REDACTED_APIKEY]');
+	});
 });
