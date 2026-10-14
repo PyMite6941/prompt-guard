@@ -2,6 +2,8 @@
 
 Project site: [Prompt Guard](https://pymite6941.is-a.dev/prompt-guard/)
 
+Detailed guides: [Setup](docs/setup.html) · [Usage](docs/usage.html)
+
 Prompt Guard is a lightweight TypeScript scanner for identifying common
 personally identifiable information (PII) and prompt-injection phrases in
 prompts before you pass them to an AI model. It can also redact detected PII
@@ -29,7 +31,7 @@ phrase is reported but is not removed from `sanitizedText`.
 - Node.js
 - npm
 
-## Install locally
+## Setup
 
 From a clone of this repository, build and link the CLI globally:
 
@@ -84,7 +86,8 @@ nor redacted.
 ## Programmatic usage
 
 Import `scanText` from the package in a TypeScript service, Express backend, or
-AI application:
+AI application after the package is published. While using the local source
+checkout, import it from `./dist/scanner` after building:
 
 ```ts
 import { scanText } from '@ai-clyde/promptguard';

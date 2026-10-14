@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#101827">
+    <meta name="description" content="Set up Prompt Guard from source and link its command-line tool.">
+    <link rel="icon" type="image/svg+xml" href="./favicon.svg">
+    <title>Setup — Prompt Guard</title>
+    <style>
+      :root { color-scheme: dark; font-family: system-ui, sans-serif; background: #101827; color: #edf2f7; --muted: #a9b6c8; --line: #28374c; --accent: #73e0bd; }
+      * { box-sizing: border-box; }
+      body { margin: 0; line-height: 1.65; }
+      a { color: var(--accent); }
+      header, footer { border-color: var(--line); border-style: solid; }
+      header { border-width: 0 0 1px; padding: 18px 0; }
+      footer { border-width: 1px 0 0; padding: 18px 0; color: var(--muted); }
+      .wrap { width: min(760px, calc(100% - 36px)); margin: 0 auto; }
+      nav { display: flex; justify-content: space-between; gap: 16px; }
+      nav a:first-child { color: #edf2f7; font-weight: 750; text-decoration: none; }
+      main { padding: 54px 0 70px; }
+      h1, h2 { line-height: 1.2; letter-spacing: -.03em; }
+      h1 { font-size: clamp(2.3rem, 7vw, 3.6rem); }
+      h2 { margin-top: 2.4em; }
+      p, li { color: var(--muted); }
+      code, pre { font-family: ui-monospace, Consolas, monospace; }
+      code { color: var(--accent); }
+      pre { overflow-x: auto; padding: 16px; border: 1px solid var(--line); border-radius: 8px; background: #0b1220; color: #edf2f7; }
+      .warning { padding: 14px 16px; border-left: 3px solid var(--accent); background: #131f30; }
+    </style>
+  </head>
+  <body>
+    <header><nav class="wrap"><a href="./">Prompt Guard</a><span><a href="./usage.html">Usage</a></span></nav></header>
+    <main class="wrap">
+      <p><a href="./">Home</a> / Setup</p>
+      <h1>Set up Prompt Guard</h1>
+      <p>Prompt Guard is a TypeScript package with a command-line tool. The scoped npm package is not published yet, so use the repository setup below until npm installation is available.</p>
+
+      <h2 id="install-source">Install from source</h2>
+      <pre><code>git clone https://github.com/PyMite6941/prompt-guard.git
+cd prompt-guard
+npm install
+npm run build</code></pre>
+
+      <h2>Link and run the CLI</h2>
+      <p>Link the local package to make its <code>prompt-guard</code> executable available on your PATH:</p>
+      <pre><code>npm link
+prompt-guard examples/clean.txt
+prompt-guard examples/leak.txt</code></pre>
+      <p>When a file contains a detected issue, the command prints matches and a PII-redacted preview, then exits with status 1. Clean input exits with status 0.</p>
+
+      <h2>Run the checks</h2>
+      <pre><code>npm test
+npm run build</code></pre>
+
+      <h2>Install from npm when published</h2>
+      <p class="warning">The <code>@ai-clyde/promptguard</code> package is not currently available from npm. After its first publication, install it with <code>npm install @ai-clyde/promptguard</code> and invoke the CLI with <code>npx @ai-clyde/promptguard &lt;file&gt;</code>.</p>
+
+      <p>Continue to the <a href="./usage.html">usage guide</a> for detection options, TypeScript examples, and guarded OpenAI calls.</p>
+    </main>
+    <footer><div class="wrap">Prompt Guard · MIT License · <a href="https://github.com/PyMite6941/prompt-guard">GitHub repository</a></div></footer>
+  </body>
+</html>

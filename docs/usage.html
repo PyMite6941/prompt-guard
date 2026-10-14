@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#101827">
+    <meta name="description" content="Use Prompt Guard from the CLI or TypeScript, including PII redaction and guarded OpenAI calls.">
+    <link rel="icon" type="image/svg+xml" href="./favicon.svg">
+    <title>Usage — Prompt Guard</title>
+    <style>
+      :root { color-scheme: dark; font-family: system-ui, sans-serif; background: #101827; color: #edf2f7; --muted: #a9b6c8; --line: #28374c; --accent: #73e0bd; }
+      * { box-sizing: border-box; }
+      body { margin: 0; line-height: 1.65; }
+      a { color: var(--accent); }
+      header, footer { border-color: var(--line); border-style: solid; }
+      header { border-width: 0 0 1px; padding: 18px 0; }
+      footer { border-width: 1px 0 0; padding: 18px 0; color: var(--muted); }
+      .wrap { width: min(760px, calc(100% - 36px)); margin: 0 auto; }
+      nav { display: flex; justify-content: space-between; gap: 16px; }
+      nav a:first-child { color: #edf2f7; font-weight: 750; text-decoration: none; }
+      main { padding: 54px 0 70px; }
+      h1, h2 { line-height: 1.2; letter-spacing: -.03em; }
+      h1 { font-size: clamp(2.3rem, 7vw, 3.6rem); }
+      h2 { margin-top: 2.4em; }
+      p, li { color: var(--muted); }
+      code, pre { font-family: ui-monospace, Consolas, monospace; }
+      code { color: var(--accent); }
+      pre { overflow-x: auto; padding: 16px; border: 1px solid var(--line); border-radius: 8px; background: #0b1220; color: #edf2f7; }
+      .warning { padding: 14px 16px; border-left: 3px solid var(--accent); background: #131f30; }
+    </style>
+  </head>
+  <body>
+    <header><nav class="wrap"><a href="./">Prompt Guard</a><span><a href="./setup.html">Setup</a></span></nav></header>
+    <main class="wrap">
+      <p><a href="./">Home</a> / Usage</p>
+      <h1>Use Prompt Guard</h1>
+      <p>Prompt Guard uses local pattern checks to identify common PII and prompt-injection phrases. Pattern checks are best-effort; they can miss unfamiliar formats and should be one layer of your application's security controls.</p>
+
+      <h2 id="cli">Command-line usage</h2>
+      <pre><code>prompt-guard examples/clean.txt
+prompt-guard examples/leak.txt
+prompt-guard examples/leak.txt --ignore=email,creditCard</code></pre>
+      <p>The CLI accepts a file path and an optional comma-separated <code>--ignore</code> list. Supported categories are <code>email</code>, <code>creditCard</code>, <code>apiKey</code>, <code>ipAddress</code>, <code>phoneNumber</code>, and <code>prompt_injection</code>. Ignored matches are neither reported nor redacted.</p>
+
+      <h2>Scan TypeScript text</h2>
+      <pre><code>import { scanText } from './dist/scanner';
+
+const result = scanText(userPrompt);
+if (!result.isSafe) {
+  console.log(result.matches);
+  // Block the request or review result.sanitizedText.
+}</code></pre>
+      <ul>
+        <li><code>isSafe</code> is true only when no enabled check matched.</li>
+        <li><code>matches</code> contains each detected category and its matched value.</li>
+        <li><code>sanitizedText</code> replaces detected PII with redaction markers.</li>
+      </ul>
+      <p>Injection phrases are reported but left unchanged in <code>sanitizedText</code>. Do not treat the sanitized output as safe to send if the prompt was flagged for injection.</p>
+
+      <h2>Guard an OpenAI request</h2>
+      <pre><code>import { callAIGuarded } from './dist/ai';
+
+const answer = await callAIGuarded(userPrompt, {
+  autoSanitize: true,
+});</code></pre>
+      <p>Set <code>OPENAI_API_KEY</code> in the environment before importing the AI helper. With <code>autoSanitize: true</code>, PII is redacted before the OpenAI call. Detected prompt injection always throws and is never sent, even when auto-sanitization is enabled. Without auto-sanitization, any detected PII or injection blocks the call.</p>
+
+      <p class="warning">The helper sends prompts that pass the configured checks to OpenAI. The standalone <code>scanText</code> function itself performs no network requests.</p>
+      <p>See the <a href="./setup.html">setup guide</a> to install and link the CLI locally.</p>
+    </main>
+    <footer><div class="wrap">Prompt Guard · MIT License · <a href="https://github.com/PyMite6941/prompt-guard">GitHub repository</a></div></footer>
+  </body>
+</html>
