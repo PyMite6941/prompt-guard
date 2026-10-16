@@ -2,8 +2,8 @@
 	"name": "@ai-clyde/promptguard",
 	"version": "1.0.0",
 	"description": "Scan prompts for personally identifiable information and prompt-injection attempts.",
-	"main": "./dist/scanner.js",
-	"types": "./dist/scanner.d.ts",
+	"main": "./dist/index.js",
+	"types": "./dist/index.d.ts",
 	"files": ["dist/", "examples/", "LICENSE", "README.md"],
 	"bin": {
 		"prompt-guard": "dist/cli.js"

@@ -84,13 +84,10 @@ Supported ignore names include `email`, `creditCard`, `apiKey`, `ipAddress`,
 nor redacted.
 
 ## Programmatic usage
+Import \`scanText\` and \`callAIGuarded\` from the package:
 
-Import `scanText` from the package in a TypeScript service, Express backend, or
-AI application after the package is published. While using the local source
-checkout, import it from `./dist/scanner` after building:
-
-```ts
-import { scanText } from '@ai-clyde/promptguard';
+\`\`\`ts
+import { scanText, callAIGuarded } from '@ai-clyde/promptguard';
 
 const result = scanText(userPrompt);
 
@@ -100,33 +97,62 @@ if (!result.isSafe) {
 } else {
   // Safe to continue according to the configured pattern checks.
 }
-```
+\`\`\`
 
-`scanText` returns:
+\`scanText\` returns:
 
-- `isSafe`: `true` when no configured pattern matched.
-- `matches`: detected match types and values.
-- `sanitizedText`: input with detected PII replaced by redaction markers.
+- \`isSafe\`: \`true\` when no configured pattern matched.
+- \`matches\`: detected match types and values.
+- \`sanitizedText\`: input with detected PII replaced by redaction markers.
 
-Injection phrases are included in `matches` but are not redacted from
-`sanitizedText`. Handle them according to your application's policy. The
-`callAIGuarded` helper blocks prompts with detected injection phrases even when
-`autoSanitize` is enabled; that option only redacts PII.
+Injection phrases are included in \`matches\` but are not redacted from
+\`sanitizedText\`. Handle them according to your application's policy. The
+\`callAIGuarded\` helper blocks prompts with detected injection phrases even when
+\`autoSanitize\` is enabled; that option only redacts PII.
 
 ## Guarded OpenAI calls
-
-The optional `callAIGuarded` helper checks and sends a prompt to OpenAI. Set
-`OPENAI_API_KEY` in the environment before importing or calling it:
+The optional `callAIGuarded` helper checks and sends a prompt to an AI model (default: OpenAI). Set `OPENAI_API_KEY` in the environment before importing or calling it. You can also override the API key and base URL via options to use OpenAI-compatible endpoints.
 
 ```ts
-import { callAIGuarded } from './dist/ai';
+import { callAIGuarded } from '@ai-clyde/promptguard';
 
-const answer = await callAIGuarded(userPrompt, { autoSanitize: true });
+const answer = await callAIGuarded(userPrompt, { 
+    autoSanitize: true,
+    maxInputTokens: 100,   //约束输入令牌数（约字符数）
+    maxOutputTokens: 50,   //限制输出令牌数
+    apiKey: process.env.CUSTOM_API_KEY, // 可选
+    baseURL: process.env.CUSTOM_BASE_URL, // 可选
+});
 ```
 
-With `autoSanitize: true`, detected PII is redacted before sending. Prompt
-injection detections always block the request; they are not safe to auto-remove
-with the current pattern-based scanner.
+With `autoSanitize: true`, detected PII is redacted before sending. Prompt injection detections always block the request; they are not safe to auto-remove with the current pattern-based scanner.
+
+### Environment Variables
+
+Create a `.env` file (see `.env.example`) to configure:
+
+- `OPENAI_API_KEY`: Your OpenAI API key (or compatible service)
+- `OPENAI_BASE_URL`: Base URL for the API (default: `https://api.openai.com/v1`)
+- `OPENAI_ORG_ID`: Optional OpenAI organization ID
+
+### Options
+
+The `callAIGuarded` function accepts an options object with:
+
+- `model`: Model name (default: `gpt-4o-mini`)
+- `autoSanitize`: Redact PII before sending (default: `false`)
+- `apiKey`: Override the API key from environment
+- `baseURL`: Override the base URL from environment
+- `maxInputTokens`: Approximate maximum input tokens (truncates prompt if exceeded)
+- `maxOutputTokens`: Maximum tokens in the model's response
+
+### Token Compression
+
+To reduce input tokens, set `maxInputTokens`. The prompt will be truncated to approximately `maxInputTokens * 4` characters (a rough estimate for English). For more precise token counting, preprocess your prompt with a tokenizer before calling.
+
+### End-to-End Protection (Future Work)
+
+For true end-to-end encryption, consider using a trusted proxy that decrypts the prompt before forwarding to the model. This library does not currently implement encryption because the model requires plaintext input.
 
 ## Development
 
@@ -135,5 +161,9 @@ npm install
 npm test
 npm run build
 ```
+
+## Data Handling
+
+Prompt Guard does not cache or store your prompts. The `scanText` function operates entirely in memory and does not send data to any external service. The `callAIGuarded` function only sends the sanitized prompt (after optional truncation) to the configured AI model. No additional metadata, cache files, or conversation history is transmitted unless you include it in the prompt yourself.
 
 The `examples/` directory contains harmless sample input for trying the CLI.
