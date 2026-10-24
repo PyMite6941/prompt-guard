@@ -1,0 +1,42 @@
+name: Scan prompts with Prompt Guard
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+permissions:
+  contents: read
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Run tests
+        run: npm test
+
+      - name: Scan clean fixture (must pass)
+        run: node dist/cli.js examples/clean.txt
+
+      - name: Scan unsafe fixture (must be caught)
+        run: |
+          if node dist/cli.js examples/leak.txt; then
+            echo "ERROR: leak.txt was not flagged — detection regressed" >&2
+            exit 1
+          fi

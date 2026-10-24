@@ -1,5 +1,8 @@
 import { OpenAI } from 'openai';
+import { config as dotenvConfig } from 'dotenv';
 import { scanText } from './scanner';
+
+dotenvConfig();
 
 let sharedOpenai: OpenAI | null = null;
 

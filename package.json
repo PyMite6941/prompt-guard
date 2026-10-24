@@ -12,7 +12,8 @@
 		"prepare": "npm run build",
 		"build": "tsc",
 		"test": "vitest run",
-		"dev": "vitest"
+		"dev": "vitest",
+		"pre-commit": "bash scripts/pre-commit.sh"
 	},
 	"keywords": ["prompt-security", "pii", "prompt-injection", "scanner"],
 	"license": "MIT",
@@ -24,6 +25,7 @@
 	},
 	"dependencies": {
 		"fs": "^0.0.1-security",
-		"openai": "^7.33.0"
+		"openai": "^7.33.0",
+		"dotenv": "^16.4.5"
 	}
 }

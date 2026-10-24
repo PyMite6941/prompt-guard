@@ -1,13 +1,17 @@
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 
-const { createCompletion } = vi.hoisted(() => ({
-	createCompletion: vi.fn(),
+const { createCompletion, constructorCalls } = vi.hoisted(() => ({
+    createCompletion: vi.fn(),
+    constructorCalls: [] as unknown[][],
 }));
 
 vi.mock('openai', () => ({
-	OpenAI: class {
-		chat = { completions: { create: createCompletion } };
-	},
+    OpenAI: class {
+        constructor(...args: unknown[]) {
+            constructorCalls.push(args);
+        }
+        chat = { completions: { create: createCompletion } };
+    },
 }));
 
 type GuardedCall = (
@@ -23,7 +27,8 @@ beforeAll(async () => {
 });
 
 afterEach(() => {
-	createCompletion.mockReset();
+    createCompletion.mockReset();
+    constructorCalls.length = 0;
 });
 
 describe('callAIGuarded', () => {
@@ -52,4 +57,27 @@ describe('callAIGuarded', () => {
 			}),
 		);
 	});
+
+	it('blocks PII when autoSanitize is disabled', async () => {
+	    await expect(
+	        callAIGuarded('Contact test@example.com.', { autoSanitize: false }),
+	    ).rejects.toThrow('Security Violation Blocked');
+	    expect(createCompletion).not.toHaveBeenCalled();
+	});
+
+	it('passes baseURL and apiKey to the OpenAI client', async () => {
+	    createCompletion.mockResolvedValue({
+	        choices: [{ message: { content: 'Done.' } }],
+	    });
+	    await callAIGuarded('Hello.', {
+	        baseURL: 'http://localhost:11434/v1',
+	        apiKey: 'ollama',
+	    });
+	    expect(constructorCalls).toHaveLength(1);
+	    expect(constructorCalls[0][0]).toMatchObject({
+	        baseURL: 'http://localhost:11434/v1',
+	        apiKey: 'ollama',
+	    });
+	});
+
 });
