@@ -101,4 +101,37 @@ it('should detect and redact SSNs', () => {
 	expect(result.sanitizedText).toContain('[REDACTED_SSN]');
 });
 
+
+it('should treat empty input as safe', () => {
+	const result = scanText('');
+	expect(result.isSafe).toBe(true);
+	expect(result.matches).toEqual([]);
+	expect(result.sanitizedText).toBe('');
+});
+
+it('should report all matches of the same type', () => {
+	const input = 'Emails: a@b.com and c@d.com.';
+	const result = scanText(input);
+	expect(result.isSafe).toBe(false);
+	expect(result.matches.filter((m) => m.type === 'email')).toHaveLength(2);
+	expect(result.sanitizedText).toBe('Emails: [REDACTED_EMAIL] and [REDACTED_EMAIL].');
+});
+
+it('should report multiple different PII types', () => {
+	const input = 'Call +1 (415) 555-2671 or email a@b.com.';
+	const result = scanText(input);
+	expect(result.isSafe).toBe(false);
+	expect(result.matches.some((m) => m.type === 'phoneNumber')).toBe(true);
+	expect(result.matches.some((m) => m.type === 'email')).toBe(true);
+	});
+
+it('should be safe when all types are ignored', () => {
+	const input = 'Contact test@example.com @johndoe.';
+	const result = scanText(input, {
+		ignore: ['email', 'socialHandle', 'creditCard', 'apiKey', 'ipAddress', 'phoneNumber', 'ssn', 'prompt_injection'],
+	});
+	expect(result.isSafe).toBe(true);
+	expect(result.matches).toEqual([]);
+	});
+
 });
