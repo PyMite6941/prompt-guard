@@ -78,4 +78,27 @@ describe('PII and Prompt Guard Scanner', () => {
 		});
 		expect(result.sanitizedText).toBe('Token: [REDACTED_APIKEY]');
 	});
+
+it('should detect and redact social media handles', () => {
+	const input = 'Follow me @johndoe on X.';
+	const result = scanText(input);
+	expect(result.isSafe).toBe(false);
+	expect(result.matches.some((m) => m.type === 'socialHandle')).toBe(true);
+	expect(result.sanitizedText).toContain('[REDACTED_SOCIALHANDLE]');
+});
+
+it('should not mistake email domains for social handles', () => {
+	const input = 'Contact me at test@example.com.';
+	const result = scanText(input);
+	expect(result.matches.some((m) => m.type === 'socialHandle')).toBe(false);
+	expect(result.matches.some((m) => m.type === 'email')).toBe(true);
+});
+
+it('should detect and redact SSNs', () => {
+	const input = 'SSN: 123-45-6789.';
+	const result = scanText(input);
+	expect(result.matches.some((m) => m.type === 'ssn')).toBe(true);
+	expect(result.sanitizedText).toContain('[REDACTED_SSN]');
+});
+
 });

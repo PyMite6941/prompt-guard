@@ -29,12 +29,16 @@ Prompt Guard is a lightweight TypeScript scanner that flags personally identifia
 ## What it detects
 
 - Email addresses
+- Social media handles (@username on X, Instagram, TikTok)
 - 13–19 digit credit-card-shaped numbers
 - API keys matching common OpenAI (`sk-...`, including `sk-proj-...`) and AWS
   (`AKIA...`) formats
 - IPv4-shaped addresses
 - Phone-number-shaped strings
+- Social Security Numbers (XXX-XX-XXXX)
 - Prompt-injection phrases such as “ignore previous instructions”
+
+These are the details you would not want posted publicly — they make content **social-safe** before sharing.
 
 This is a best-effort pattern-based check, not a substitute for a complete
 security review or validation of payment-card numbers. A detected injection
@@ -230,7 +234,7 @@ cp .env.example .env
 | `maxOutputTokens` | `number` | `undefined` | Max output tokens |
 
 `ScanOptions` for `scanText`:
-- `ignore` (`string[]`) — categories to skip (`email`, `creditCard`, `apiKey`, `ipAddress`, `phoneNumber`, `prompt_injection`)
+- `ignore` (`string[]`) — categories to skip (`email`, `socialHandle`, `creditCard`, `apiKey`, `ipAddress`, `phoneNumber`, `ssn`, `prompt_injection`)
 
 ---
 
