@@ -54,6 +54,8 @@ describe('PII and Prompt Guard Scanner', () => {
 			type: 'phoneNumber',
 			value: '+1 (415) 555-2671',
 			severity: 'medium',
+			start: 5,
+			end: 22,
 		});
 		expect(result.sanitizedText).toBe('Call [REDACTED_PHONENUMBER] for help.');
 	});
@@ -66,6 +68,8 @@ describe('PII and Prompt Guard Scanner', () => {
 			type: 'creditCard',
 			value: '378282246310005',
 			severity: 'critical',
+			start: 11,
+			end: 26,
 		});
 		expect(result.sanitizedText).toBe('Test card: [REDACTED_CREDITCARD].');
 	});
@@ -78,6 +82,8 @@ describe('PII and Prompt Guard Scanner', () => {
 			type: 'apiKey',
 			value: 'sk-proj-12345678901234567890_abc',
 			severity: 'critical',
+			start: 7,
+			end: 39,
 		});
 		expect(result.sanitizedText).toBe('Token: [REDACTED_APIKEY]');
 	});

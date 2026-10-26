@@ -1,0 +1,27 @@
+# Prompt Guard configuration file
+# Copy to .promptguardrc and customize
+
+{
+  // Categories to skip during scanning
+  // Options: email, socialHandle, creditCard, apiKey, githubToken, awsSecretKey,
+  //   databaseUrl, jwtToken, stripeKey, sshPrivateKey, ipAddress, phoneNumber, ssn, prompt_injection
+  "ignore": [],
+
+  // Minimum severity level to report
+  // Options: low, medium, high, critical
+  // Set to "high" to only report high and critical issues
+  "minSeverity": null,
+
+  // Partially redact values instead of full replacement
+  // Shows last 4 characters, masks the rest (e.g. ******6789)
+  "partialRedaction": false,
+
+  // Custom detection patterns (regex with severity)
+  "customPatterns": {
+    // Example: detect internal ticket numbers
+    // "ticketNumber": {
+    //   "pattern": "\\bTKT-\\d{6}\\b",
+    //   "severity": "low"
+    // }
+  }
+}

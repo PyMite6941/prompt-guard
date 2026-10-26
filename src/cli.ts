@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { scanText } from './scanner';
+import { scanText, generateSarif, ScanResult } from './scanner';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -23,14 +23,25 @@ function main(): void {
         : [];
 
     const jsonArg = args.includes('--json');
+    const sarifArg = args.includes('--sarif');
+    const partialRedactionArg = args.includes('--partial-redaction');
+    const configArg = args.find((arg) => arg.startsWith('--config='));
+    const configPath = configArg ? configArg.replace('--config=', '') : undefined;
 
     function scanFile(filePath: string): void {
         const content = fs.readFileSync(filePath, 'utf8');
-        const result = scanText(content, { ignore: ignoreList });
+        const result = scanText(content, {
+            ignore: ignoreList,
+            minSeverity: undefined,
+            partialRedaction: partialRedactionArg,
+            configPath,
+        });
 
         if (!result.isSafe) {
             if (jsonArg) {
                 results.push({ file: filePath, result });
+            } else if (sarifArg) {
+                sarifResults.push({ file: filePath, result });
             } else {
                 if (exitCode === 0) {
                     console.log('🚨 Security risk detected!');
@@ -43,6 +54,8 @@ function main(): void {
         } else {
             if (jsonArg) {
                 results.push({ file: filePath, result });
+            } else if (sarifArg) {
+                sarifResults.push({ file: filePath, result });
             } else {
                 console.log(`✅ ${filePath} is clean and safe.`);
             }
@@ -62,11 +75,12 @@ function main(): void {
     }
 
     let exitCode = 0;
-    const results: Array<{ file: string; result: ReturnType<typeof scanText> }> = [];
+    const results: Array<{ file: string; result: ScanResult }> = [];
+    const sarifResults: Array<{ file: string; result: ScanResult }> = [];
 
     if (!target) {
         console.error('Error: Please provide a file or directory path to scan.');
-        console.error('Usage: prompt-guard <path> [--ignore=email,apiKey] [--json]');
+        console.error('Usage: prompt-guard <path> [--ignore=email,apiKey] [--json] [--sarif] [--partial-redaction] [--config=path]');
         process.exit(1);
     }
 
@@ -95,6 +109,50 @@ function main(): void {
                 2,
             ),
         );
+    }
+
+    if (sarifArg) {
+        const sarifLogs = sarifResults.map((r) =>
+            generateSarif(r.file, r.result),
+        );
+        const allRules: Record<string, number> = {};
+        let ruleCounter = 0;
+        const mergedResults: any[] = [];
+        const mergedRules: any[] = [];
+
+        sarifLogs.forEach((log) => {
+            const rules = log.runs[0]?.tool.driver.rules || [];
+            const res = log.runs[0]?.results || [];
+            rules.forEach((rule: any) => {
+                if (!allRules[rule.id]) {
+                    allRules[rule.id] = ruleCounter;
+                    mergedRules.push(rule);
+                    ruleCounter++;
+                }
+            });
+            res.forEach((result: any) => {
+                mergedResults.push(result);
+            });
+        });
+
+        const mergedSarif = {
+            version: '2.1.0',
+            schema: 'https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json',
+            runs: [
+                {
+                    tool: {
+                        driver: {
+                            name: 'Prompt Guard',
+                            version: '2.0.0',
+                            rules: mergedRules,
+                        },
+                    },
+                    results: mergedResults,
+                },
+            ],
+        };
+
+        console.log(JSON.stringify(mergedSarif, null, 2));
     }
 
     process.exit(exitCode);

@@ -28,15 +28,28 @@ Prompt Guard is a lightweight TypeScript scanner that flags personally identifia
 
 ## What it detects
 
+### PII Detection
+
 - Email addresses
 - Social media handles (@username on X, Instagram, TikTok)
 - 13–19 digit credit-card-shaped numbers
-- API keys matching common OpenAI (`sk-...`, including `sk-proj-...`) and AWS
-  (`AKIA...`) formats
-- IPv4-shaped addresses
-- Phone-number-shaped strings
 - Social Security Numbers (XXX-XX-XXXX)
-- Prompt-injection phrases such as “ignore previous instructions”
+- Phone-number-shaped strings
+- IPv4-shaped addresses
+
+### Secret Detection
+
+- API keys (OpenAI `sk-...`, `sk-proj-...`, AWS `AKIA...`)
+- GitHub tokens (`ghp_*`, `github_pat_*`)
+- AWS secret access keys (40-char base64)
+- Stripe keys (`sk_live_*`, `sk_test_*`)
+- Database connection strings (`postgres://user:pass@host`, etc.)
+- JWT tokens
+- SSH private keys (`-----BEGIN ... PRIVATE KEY-----`)
+
+### Prompt Injection
+
+- Phrases such as “ignore previous instructions”, “system prompt”, “you are now unbound”
 
 These are the details you would not want posted publicly — they make content **social-safe** before sharing.
 
@@ -97,9 +110,42 @@ list of match types:
 prompt-guard examples/leak.txt --ignore=email,creditCard
 ```
 
-Supported ignore names include `email`, `creditCard`, `apiKey`, `ipAddress`,
-`phoneNumber`, and `prompt_injection`. Ignored categories are neither reported
-nor redacted.
+Supported ignore names: `email`, `socialHandle`, `creditCard`, `apiKey`,
+`githubToken`, `awsSecretKey`, `databaseUrl`, `jwtToken`, `stripeKey`,
+`sshPrivateKey`, `ipAddress`, `phoneNumber`, `ssn`, `prompt_injection`.
+Ignored categories are neither reported nor redacted.
+
+### CLI flags
+
+| Flag | Description |
+|------|-------------|
+| `--ignore=cat1,cat2` | Skip comma-separated categories |
+| `--json` | Output machine-readable JSON results |
+| `--sarif` | Output SARIF 2.1.0 log (for code scanning tools) |
+| `--partial-redaction` | Show last 4 chars instead of full redaction |
+| `--config=path` | Load configuration from a `.promptguardrc` file |
+| `--tui` / `-t` | Launch the terminal user interface |
+
+### Terminal UI (TUI)
+
+Launch a full-screen terminal interface with navigation:
+
+```sh
+prompt-guard --tui
+# or
+prompt-guard -t
+```
+
+The TUI provides:
+- **Dashboard** — scan statistics with severity breakdown
+- **Scan File / Scan Directory** — scan individual files or recursive directories
+- **View Results** — detailed match listing with type and severity
+- **Sanitized Text** — view PII-redacted output
+- **Configuration** — edit ignore list, set minimum severity, reset defaults
+- **Export JSON** — machine-readable JSON output
+- **About** — version and license info
+
+Navigate with arrow keys, select with Enter, press `q` to quit.
 
 ## Programmatic usage
 Import \`scanText\` and \`callAIGuarded\` from the package:
@@ -234,7 +280,89 @@ cp .env.example .env
 | `maxOutputTokens` | `number` | `undefined` | Max output tokens |
 
 `ScanOptions` for `scanText`:
-- `ignore` (`string[]`) — categories to skip (`email`, `socialHandle`, `creditCard`, `apiKey`, `ipAddress`, `phoneNumber`, `ssn`, `prompt_injection`)
+- `ignore` (`string[]`) — categories to skip (`email`, `socialHandle`, `creditCard`, `apiKey`, `githubToken`, `awsSecretKey`, `databaseUrl`, `jwtToken`, `stripeKey`, `sshPrivateKey`, `ipAddress`, `phoneNumber`, `ssn`, `prompt_injection`)
+- `minSeverity` (`'low' | 'medium' | 'high' | 'critical'`) — only report matches at or above this severity
+- `partialRedaction` (`boolean`) — show last 4 characters instead of full replacement
+- `configPath` (`string`) — path to a `.promptguardrc` configuration file
+
+---
+
+## Configuration File (`.promptguardrc`)
+
+Create a `.promptguardrc` file in your project root (copy from `.promptguardrc.example`):
+
+```sh
+cp .promptguardrc.example .promptguardrc
+# edit .promptguardrc with your values
+```
+
+| Setting | Type | Description |
+|---------|------|-------------|
+| `ignore` | `string[]` | Categories to skip |
+| `minSeverity` | `'low' \| 'medium' \| 'high' \| 'critical'` | Minimum severity to report |
+| `partialRedaction` | `boolean` | Show last 4 chars instead of full redaction |
+| `customPatterns` | `object` | Custom regex patterns with severity |
+
+Example `.promptguardrc`:
+
+```json
+{
+  "ignore": ["ipAddress", "phoneNumber"],
+  "minSeverity": "high",
+  "partialRedaction": true,
+  "customPatterns": {
+    "internalTicket": {
+      "pattern": "\\bTKT-\\d{6}\\b",
+      "severity": "low"
+    }
+  }
+}
+```
+
+Options passed directly to `scanText()` or CLI flags take precedence over the config file.
+
+---
+
+## Severity Levels
+
+Every match is assigned a severity level:
+
+| Severity | Examples |
+|----------|----------|
+| `critical` | Credit cards, API keys, GitHub tokens, AWS keys, DB URLs, Stripe keys, SSH keys, prompt injection |
+| `high` | SSNs, JWT tokens, system prompt phrases |
+| `medium` | Emails, phone numbers |
+| `low` | Social handles, IP addresses |
+
+Use `minSeverity` to filter out noise — e.g. `minSeverity: 'high'` only reports high and critical issues.
+
+---
+
+## Partial Redaction
+
+Instead of replacing the entire matched value with `[REDACTED_TYPE]`, partial redaction shows the last 4 characters:
+
+```
+Before:  Contact alice@example.com or SSN 123-45-6789
+After:   Contact *************.com or SSN *******6789
+```
+
+Enable with `--partial-redaction` on the CLI or `partialRedaction: true` in config/options.
+
+---
+
+## SARIF Output
+
+For integration with code scanning tools (GitHub Code Scanning, Azure DevOps, etc.), output results in SARIF 2.1.0 format:
+
+```sh
+prompt-guard examples/leak.txt --sarif > results.sarif
+```
+
+The SARIF output includes:
+- Rule definitions for each detection type with severity levels
+- Result locations with file URIs
+- Messages describing each match
 
 ---
 
@@ -333,7 +461,7 @@ Scanned extensions: `.md`, `.txt`, `.ts`, `.js`, `.json`, `.html`, `.yaml`, `.ym
 **Fix (already applied in this repo):** `tsconfig.json` uses a `files:` array listing every source file explicitly instead of an `include:` glob. `files:` matches reliably where globs do not.
 
 ```json
-"files": ["src/index.ts", "src/scanner.ts", "src/patterns.ts", "src/ai.ts", "src/cli.ts"]
+"files": ["src/index.ts", "src/scanner.ts", "src/patterns.ts", "src/ai.ts", "src/cli.ts", "src/tui.ts"]
 ```
 
 Do not rename the project directory or patch source to work around this — the defect is in `tsc` path resolution, not the source.
@@ -360,14 +488,21 @@ curl http://localhost:11434/api/tags
 
 ```sh
 npm install
-npm test      # vitest — 17 tests across scanner, ai, and CLI integration
+npm test      # vitest — 24 tests across scanner, ai, and CLI integration
 npm run build # tsc — outputs to dist/
 ```
 
 ### Adding a check
 1. Add a pattern to `src/patterns.ts` (`PII_PATTERNS` or `INJECTION_PATTERNS`)
 2. Add a test to `tests/scanner.test.ts`
-3. Run `npm test && npm run build`
+3. Add custom patterns to `.promptguardrc` if project-specific
+4. Run `npm test && npm run build`
+
+### Adding a TUI view
+1. Add a new method to `PromptGuardTUI` class in `src/tui.ts`
+2. Add a menu item to the navigation list in `buildLayout()`
+3. Add a case to `handleNavSelect()`
+4. Run `npm test && npm run build`
 
 ---
 
