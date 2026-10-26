@@ -16,7 +16,7 @@ export interface ScanResult {
 
 export interface ScanOptions {
 	ignore?: string[];
-	minSeverity?: Severity;
+	minSeverity?: Severity | undefined;
 }
 
 export function scanText(text: string, options: ScanOptions = {}): ScanResult {

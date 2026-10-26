@@ -4,7 +4,12 @@
 	"description": "Scan prompts for personally identifiable information and prompt-injection attempts.",
 	"main": "./dist/index.js",
 	"types": "./dist/index.d.ts",
-	"files": ["dist/", "examples/", "LICENSE", "README.md"],
+	"files": [
+		"dist/",
+		"examples/",
+		"LICENSE",
+		"README.md"
+	],
 	"bin": {
 		"prompt-guard": "dist/cli.js"
 	},
@@ -15,17 +20,24 @@
 		"dev": "vitest",
 		"pre-commit": "bash scripts/pre-commit.sh"
 	},
-	"keywords": ["prompt-security", "pii", "prompt-injection", "scanner"],
+	"keywords": [
+		"prompt-security",
+		"pii",
+		"prompt-injection",
+		"scanner"
+	],
 	"license": "MIT",
 	"type": "commonjs",
 	"devDependencies": {
+		"@types/blessed": "^0.1.27",
 		"@types/node": "^26.6.5",
 		"typescript": "^7.0.2",
 		"vitest": "^5.0.4"
 	},
 	"dependencies": {
+		"blessed": "^0.1.81",
+		"dotenv": "^16.4.5",
 		"fs": "^0.0.1-security",
-		"openai": "^7.33.0",
-		"dotenv": "^16.4.5"
+		"openai": "^7.33.0"
 	}
 }
