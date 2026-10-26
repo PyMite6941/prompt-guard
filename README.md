@@ -276,6 +276,33 @@ jobs:
 
 ---
 
+## Publishing to npm
+
+Prompts Guard is published to npm as `@ai-clyde/promptguard` from a version tag. The CI workflow in `.github/workflows/publish.yml` runs on any tag matching `v*`, builds, runs the test suite, verifies the tag matches `package.json` version, then publishes to npm with public access.
+
+### Set up the npm token
+
+1. Log in to npm on the account that owns/publishes `@ai-clyde`.
+2. Create an access token (Account Settings → Access Tokens → Create New Token) with **Publish** permission for the `@ai-clyde` scope.
+3. Add it to the GitHub repository as a secret named `NPM_TOKEN` (Settings → Secrets and variables → Actions → New repository secret).
+
+### Release a new version
+
+```sh
+# 1. Bump the version in package.json (e.g. 1.0.0 -> 1.0.1)
+# 2. Commit and push
+git commit -m "chore: release v1.0.1"
+git push origin master
+
+# 3. Create and push the version tag
+git tag v1.0.1
+git push origin v1.0.1
+```
+
+Pushing the tag triggers the publish workflow. It will fail if the tag version doesn't match `package.json`, so always keep them in sync.
+
+---
+
 ## Pre-commit hook
 
 A committed hook script scans staged text files on every commit and blocks the commit if anything is unsafe.
