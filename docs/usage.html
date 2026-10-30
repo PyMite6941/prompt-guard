@@ -27,6 +27,10 @@
       code { color: var(--accent); }
       pre { overflow-x: auto; padding: 16px; border: 1px solid var(--line); border-radius: 8px; background: #0b1220; color: #edf2f7; }
       .warning { padding: 14px 16px; border-left: 3px solid var(--accent); background: #131f30; }
+      .tip { padding: 14px 16px; border-left: 3px solid var(--line); background: #0b1220; }
+      table { width: 100%; border-collapse: collapse; margin: 16px 0; }
+      th, td { padding: 8px; border-bottom: 1px solid var(--line); text-align: left; }
+      th { color: var(--muted); font-family: monospace; }
     </style>
   </head>
   <body>
@@ -40,10 +44,22 @@
       <pre><code>prompt-guard examples/clean.txt
 prompt-guard examples/leak.txt
 prompt-guard examples/leak.txt --ignore=email,creditCard</code></pre>
-      <p>The CLI accepts a file path and an optional comma-separated <code>--ignore</code> list. Supported categories are <code>email</code>, <code>creditCard</code>, <code>apiKey</code>, <code>ipAddress</code>, <code>phoneNumber</code>, and <code>prompt_injection</code>. Ignored matches are neither reported nor redacted.</p>
+      <p>The CLI accepts a file path or directory and an optional set of flags:</p>
+      <table>
+        <thead><tr><th>Flag</th><th>Description</th></tr></thead>
+        <tbody>
+          <tr><td><code>--ignore=cat1,cat2</code></td><td>Skip comma-separated categories</td></tr>
+          <tr><td><code>--json</code></td><td>Output machine-readable JSON results</td></tr>
+          <tr><td><code>--sarif</code></td><td>Output SARIF 2.1.0 log for code-scanning tools</td></tr>
+          <tr><td><code>--partial-redaction</code></td><td>Show last 4 characters instead of full redaction</td></tr>
+          <tr><td><code>--config=path</code></td><td>Load configuration from a .promptguardrc file</td></tr>
+          <tr><td><code>--tui</code> / <code>-t</code></td><td>Launch the terminal user interface</td></tr>
+        </tbody>
+      </table>
+      <p>Supported ignore names: <code>email</code>, <code>creditCard</code>, <code>apiKey</code>, <code>githubToken</code>, <code>awsSecretKey</code>, <code>databaseUrl</code>, <code>jwtToken</code>, <code>stripeKey</code>, <code>sshPrivateKey</code>, <code>ipAddress</code>, <code>phoneNumber</code>, <code>ssn</code>, <code>prompt_injection</code>. Ignored matches are neither reported nor redacted.</p>
 
       <h2>Scan TypeScript text</h2>
-      <pre><code>import { scanText } from './dist/scanner';
+      <pre><code>import { scanText } from '@ai-clyde/promptguard';
 
 const result = scanText(userPrompt);
 if (!result.isSafe) {
@@ -52,20 +68,47 @@ if (!result.isSafe) {
 }</code></pre>
       <ul>
         <li><code>isSafe</code> is true only when no enabled check matched.</li>
-        <li><code>matches</code> contains each detected category and its matched value.</li>
+        <li><code>matches</code> contains each detected category, its matched value, and severity.</li>
         <li><code>sanitizedText</code> replaces detected PII with redaction markers.</li>
       </ul>
       <p>Injection phrases are reported but left unchanged in <code>sanitizedText</code>. Do not treat the sanitized output as safe to send if the prompt was flagged for injection.</p>
 
+      <h2>Severity levels</h2>
+      <p>Every match is assigned a severity:</p>
+      <table>
+        <thead><tr><th>Severity</th><th>Examples</th></tr></thead>
+        <tbody>
+          <tr><td><code>critical</code></td><td>Credit cards, API keys, GitHub tokens, AWS keys, DB URLs, Stripe keys, SSH keys, prompt injection</td></tr>
+          <tr><td><code>high</code></td><td>SSNs, JWT tokens, system-prompt phrases</td></tr>
+          <tr><td><code>medium</code></td><td>Emails, phone numbers</td></tr>
+          <tr><td><code>low</code></td><td>Social handles, IP addresses</td></tr>
+        </tbody>
+      </table>
+
       <h2>Guard an OpenAI request</h2>
-      <pre><code>import { callAIGuarded } from './dist/ai';
+      <pre><code>import { callAIGuarded } from '@ai-clyde/promptguard';
 
 const answer = await callAIGuarded(userPrompt, {
   autoSanitize: true,
 });</code></pre>
       <p>Set <code>OPENAI_API_KEY</code> in the environment before importing the AI helper. With <code>autoSanitize: true</code>, PII is redacted before the OpenAI call. Detected prompt injection always throws and is never sent, even when auto-sanitization is enabled. Without auto-sanitization, any detected PII or injection blocks the call.</p>
-
       <p class="warning">The helper sends prompts that pass the configured checks to OpenAI. The standalone <code>scanText</code> function itself performs no network requests.</p>
+
+      <h2>Configuration file (.promptguardrc)</h2>
+      <p>Create a <code>.promptguardrc</code> in your project root:</p>
+      <pre><code>{
+  "ignore": ["ipAddress", "phoneNumber"],
+  "minSeverity": "high",
+  "partialRedaction": true,
+  "customPatterns": {
+    "internalTicket": {
+      "pattern": "\\bTKT-\\d{6}\\b",
+      "severity": "low"
+    }
+  }
+}</code></pre>
+      <p>Use <code>--config=path</code> to point to a custom config file. Options passed to <code>scanText()</code> or CLI flags take precedence over the config file.</p>
+
       <p>See the <a href="./setup.html">setup guide</a> to install and link the CLI locally.</p>
     </main>
     <footer><div class="wrap">Prompt Guard · MIT License · <a href="https://github.com/PyMite6941/prompt-guard">GitHub repository</a></div></footer>

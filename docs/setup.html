@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="theme-color" content="#101827">
-    <meta name="description" content="Set up Prompt Guard from source and link its command-line tool.">
+    <meta name="description" content="Set up Prompt Guard from source or install from npm.">
     <link rel="icon" type="image/svg+xml" href="./favicon.svg">
     <title>Setup — Prompt Guard</title>
     <style>
@@ -27,6 +27,7 @@
       code { color: var(--accent); }
       pre { overflow-x: auto; padding: 16px; border: 1px solid var(--line); border-radius: 8px; background: #0b1220; color: #edf2f7; }
       .warning { padding: 14px 16px; border-left: 3px solid var(--accent); background: #131f30; }
+      .tip { padding: 14px 16px; border-left: 3px solid var(--line); background: #0b1220; }
     </style>
   </head>
   <body>
@@ -34,13 +35,19 @@
     <main class="wrap">
       <p><a href="./">Home</a> / Setup</p>
       <h1>Set up Prompt Guard</h1>
-      <p>Prompt Guard is a TypeScript package with a command-line tool. The scoped npm package is not published yet, so use the repository setup below until npm installation is available.</p>
+      <p>Prompt Guard is a TypeScript package with a command-line tool. Install it from npm or build from source.</p>
+
+      <h2 id="install-npm">Install from npm</h2>
+      <pre><code>npm install -g @ai-clyde/promptguard</code></pre>
+      <p>Then run the CLI:</p>
+      <pre><code>prompt-guard examples/clean.txt</code></pre>
 
       <h2 id="install-source">Install from source</h2>
       <pre><code>git clone https://github.com/PyMite6941/prompt-guard.git
 cd prompt-guard
 npm install
-npm run build</code></pre>
+npm run build
+npm link</code></pre>
 
       <h2>Link and run the CLI</h2>
       <p>Link the local package to make its <code>prompt-guard</code> executable available on your PATH:</p>
@@ -49,12 +56,26 @@ prompt-guard examples/clean.txt
 prompt-guard examples/leak.txt</code></pre>
       <p>When a file contains a detected issue, the command prints matches and a PII-redacted preview, then exits with status 1. Clean input exits with status 0.</p>
 
+      <h2>CLI flags</h2>
+      <table style="width:100%; border-collapse: collapse; margin: 16px 0;">
+        <thead><tr style="text-align:left;"><th style="padding:8px; border-bottom:1px solid var(--line); color:var(--muted);">Flag</th><th style="padding:8px; border-bottom:1px solid var(--line); color:var(--muted);">Description</th></tr></thead>
+        <tbody>
+          <tr style="border-bottom:1px solid var(--line);"><td style="padding:8px; color:var(--accent); font-family:monospace;"><code>--ignore=cat1,cat2</code></td><td style="padding:8px;">Skip comma-separated categories (email, creditCard, apiKey, githubToken, ssn, prompt_injection, etc.)</td></tr>
+          <tr style="border-bottom:1px solid var(--line);"><td style="padding:8px; color:var(--accent); font-family:monospace;"><code>--json</code></td><td style="padding:8px;">Output machine-readable JSON results</td></tr>
+          <tr style="border-bottom:1px solid var(--line);"><td style="padding:8px; color:var(--accent); font-family:monospace;"><code>--sarif</code></td><td style="padding:8px;">Output SARIF 2.1.0 log for code-scanning tools</td></tr>
+          <tr style="border-bottom:1px solid var(--line);"><td style="padding:8px; color:var(--accent); font-family:monospace;"><code>--partial-redaction</code></td><td style="padding:8px;">Show last 4 characters instead of full redaction</td></tr>
+          <tr style="border-bottom:1px solid var(--line);"><td style="padding:8px; color:var(--accent); font-family:monospace;"><code>--config=path</code></td><td style="padding:8px;">Load configuration from a .promptguardrc file</td></tr>
+          <tr style="border-bottom:1px solid var(--line);"><td style="padding:8px; color:var(--accent); font-family:monospace;"><code>--tui</code> / <code>-t</code></td><td style="padding:8px;">Launch the terminal user interface</td></tr>
+        </tbody>
+      </table>
+
       <h2>Run the checks</h2>
       <pre><code>npm test
 npm run build</code></pre>
 
-      <h2>Install from npm when published</h2>
-      <p class="warning">The <code>@ai-clyde/promptguard</code> package is not currently available from npm. After its first publication, install it with <code>npm install @ai-clyde/promptguard</code> and invoke the CLI with <code>npx @ai-clyde/promptguard &lt;file&gt;</code>.</p>
+      <div class="tip">
+        <p><strong>Terminal UI:</strong> Run <code>prompt-guard --tui</code> for a full-screen terminal interface with navigation, configuration, and JSON export.</p>
+      </div>
 
       <p>Continue to the <a href="./usage.html">usage guide</a> for detection options, TypeScript examples, and guarded OpenAI calls.</p>
     </main>
