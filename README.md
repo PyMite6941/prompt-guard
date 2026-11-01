@@ -13,6 +13,7 @@ Prompt Guard is a lightweight TypeScript scanner that flags personally identifia
 - [Quick start](#quick-start)
 - [CLI usage](#cli-usage)
 - [Programmatic usage](#programmatic-usage)
+- [Local secret vault](#local-secret-vault)
 - [Guarded AI calls (`callAIGuarded`)](#guarded-ai-calls-callaguarded)
 - [Local models — zero API cost](#local-models---zero-api-cost)
 - [Environment variables](#environment-variables)
@@ -147,6 +148,62 @@ The TUI provides:
 
 Navigate with arrow keys, select with Enter, press `q` to quit.
 
+## Local secret vault
+
+The local vault keeps credentials encrypted on disk and lets a trusted
+application use a secret by ID without making the secret itself a model-facing
+tool result. Secret IDs may appear in prompts; values must not. The CLI asks for
+passphrases and secret values without echoing them, and never accepts secret
+values as command-line arguments:
+
+```sh
+prompt-guard vault set deployment-token
+prompt-guard vault list
+prompt-guard vault delete deployment-token
+```
+
+The first `set` creates an encrypted vault and asks you to confirm its
+passphrase. Later commands ask for the passphrase again. `list` prints IDs only;
+there is intentionally no command that prints a secret. The vault is stored
+under the operating system's per-user data directory. Set
+`PROMPT_GUARD_VAULT_PATH` to choose another location.
+
+Trusted host code can pass a secret to a local operation using the package API:
+
+```ts
+import { SecretVault } from '@ai-clyde/promptguard';
+
+async function runApprovedDeployment() {
+  const vault = await SecretVault.open({
+    passphrase: await readPassphraseFromYourOSKeychain(),
+  });
+  try {
+    // Keep the ID fixed by host policy; do not expose a generic "get secret" tool.
+    return await vault.withSecret('deployment-token', (token) =>
+      deployApprovedArtifact({ token }),
+    );
+  } finally {
+    vault.close();
+  }
+}
+```
+
+`withSecret` supplies a temporary `Buffer` to trusted local host code and
+zeroes that buffer after the callback completes; do not retain or copy it.
+Integrate it inside a
+harness's local tool handler, not as a tool that returns the secret. Pass only
+the minimum credential to an allow-listed operation and ensure the handler
+does not put it in prompts, tool results, logs, traces, or telemetry. A
+model-controlled shell or unrestricted local process with the same OS account
+can bypass application-level restrictions; use your harness's tool allowlists
+and process isolation for that threat model. Prompt Guard cannot guarantee
+that a secret stays local if a host deliberately sends it to a cloud API.
+
+Vault files use scrypt-derived keys and AES-256-GCM authenticated encryption.
+Use a unique, strong passphrase and keep a recoverable copy outside the vault;
+losing it means the encrypted secrets cannot be recovered. The vault is local
+to the current machine and does not sync or call a network service.
+
 ## Programmatic usage
 Import \`scanText\` and \`callAIGuarded\` from the package:
 
@@ -245,7 +302,12 @@ npm run build
 
 Prompt Guard does not cache or store your prompts. The `scanText` function operates entirely in memory and does not send data to any external service. The `callAIGuarded` function only sends the sanitized prompt (after optional truncation) to the configured AI model. No additional metadata, cache files, or conversation history is transmitted unless you include it in the prompt yourself.
 
-The `examples/` directory contains harmless sample input for trying the CLI.
+The optional secret vault stores encrypted credentials locally. Its passphrase
+and secret values are not sent to a service by the vault API. Harness
+integrations are responsible for keeping values out of model requests and
+model-visible tool results. The npm package includes only the clean and leak
+CLI examples; other files in the repository's `examples/` directory are
+excluded from the published package.
 
 ---
 
@@ -406,28 +468,35 @@ jobs:
 
 ## Publishing to npm
 
-Prompts Guard is published to npm as `@ai-clyde/promptguard` from a version tag. The CI workflow in `.github/workflows/publish.yml` runs on any tag matching `v*`, builds, runs the test suite, verifies the tag matches `package.json` version, then publishes to npm with public access.
+The npm release workflow publishes `@ai-clyde/promptguard` from a version tag. It installs dependencies, builds, runs the test suite, verifies the tag matches `package.json`, checks npm credentials, then publishes with public access. `npm pack --dry-run` previews package contents; the allowlist excludes local vault files and unlisted examples.
 
 ### Set up the npm token
 
-1. Log in to npm on the account that owns/publishes `@ai-clyde`.
-2. Create an access token (Account Settings → Access Tokens → Create New Token) with **Publish** permission for the `@ai-clyde` scope.
-3. Add it to the GitHub repository as a secret named `NPM_TOKEN` (Settings → Secrets and variables → Actions → New repository secret).
+1. Create an npm granular access token with **Read and write** package permissions for `@ai-clyde/promptguard`. Its owner must be allowed to publish under the `@ai-clyde` scope.
+2. Add the token to the GitHub repository as the Actions secret `NPM_TOKEN` (Settings → Secrets and variables → Actions → New repository secret). The workflow checks the token with `npm whoami` before publishing.
+3. Keep the token secret; never add it to `.env`, source, or workflow files.
 
 ### Release a new version
 
-```sh
-# 1. Bump the version in package.json (e.g. 1.0.0 -> 1.0.1)
-# 2. Commit and push
-git commit -m "chore: release v1.0.1"
-git push origin master
+Review the tarball before release:
 
-# 3. Create and push the version tag
-git tag v1.0.1
-git push origin v1.0.1
+```sh
+npm pack --dry-run
+npm test
+npm run build
 ```
 
-Pushing the tag triggers the publish workflow. It will fail if the tag version doesn't match `package.json`, so always keep them in sync.
+Commit and push all intended release changes, then push a tag matching the version in both `package.json` and `package-lock.json`:
+
+```sh
+git add <intended-release-files>
+git commit -m "chore: release v1.0.2"
+git push origin master
+git tag v1.0.2
+git push origin v1.0.2
+```
+
+The repository already has a `v1.0.1` tag, so do not reuse or move it. The next prepared version is `1.0.2`. Pushing its matching tag triggers the workflow; publishing fails before upload if the tag, package version, or npm credentials do not match.
 
 ---
 

@@ -2,9 +2,112 @@
 import { scanText, generateSarif, ScanResult } from './scanner';
 import * as fs from 'fs';
 import * as path from 'path';
+import { getDefaultVaultPath, SecretVault } from './vault';
 
-function main(): void {
+function readHidden(prompt: string): Promise<string> {
+    const input = process.stdin;
+    if (!input.isTTY || !process.stdout.isTTY || typeof input.setRawMode !== 'function') {
+        return Promise.reject(
+            new Error('Vault commands require an interactive terminal; do not pass secrets as arguments.'),
+        );
+    }
+
+    return new Promise((resolve, reject) => {
+        const wasRaw = input.isRaw;
+        let value = '';
+        let finished = false;
+        const finish = (error?: Error) => {
+            if (finished) return;
+            finished = true;
+            input.removeListener('data', onData);
+            input.pause();
+            input.setRawMode(wasRaw);
+            process.stdout.write('\n');
+            if (error) reject(error);
+            else resolve(value);
+        };
+        const onData = (chunk: Buffer | string) => {
+            for (const character of chunk.toString()) {
+                if (character === '\u0003') {
+                    finish(new Error('Input cancelled.'));
+                    return;
+                }
+                if (character === '\r' || character === '\n') {
+                    finish();
+                    return;
+                }
+                if (character === '\u007f' || character === '\b') {
+                    value = Array.from(value).slice(0, -1).join('');
+                } else if (character >= ' ') {
+                    value += character;
+                }
+            }
+        };
+
+        process.stdout.write(prompt);
+        input.setEncoding('utf8');
+        input.setRawMode(true);
+        input.resume();
+        input.on('data', onData);
+    });
+}
+
+async function runVaultCommand(args: string[]): Promise<void> {
+    const [operation, id] = args;
+    if (!['set', 'list', 'delete'].includes(operation ?? '')) {
+        console.error(
+            'Usage: prompt-guard vault <set <id>|list|delete <id>>\nSecret values and passphrases are entered without terminal echo.',
+        );
+        process.exitCode = 1;
+        return;
+    }
+    if ((operation === 'set' || operation === 'delete') && !id) {
+        throw new Error(`Usage: prompt-guard vault ${operation} <id>.`);
+    }
+    if (args.length > (operation === 'list' ? 1 : 2)) {
+        throw new Error('Too many arguments for vault command.');
+    }
+    if (id && !/^[a-zA-Z0-9._-]{1,128}$/.test(id)) {
+        throw new Error('Secret IDs must be 1-128 characters using letters, numbers, ".", "_" or "-".');
+    }
+
+    const vaultPath = getDefaultVaultPath();
+    if (operation !== 'set' && !fs.existsSync(vaultPath)) {
+        throw new Error('No vault exists yet; create one with "prompt-guard vault set <id>".');
+    }
+    let passphrase = await readHidden('Vault passphrase: ');
+    if (operation === 'set' && !fs.existsSync(vaultPath)) {
+        const confirmation = await readHidden('Confirm new vault passphrase: ');
+        if (passphrase !== confirmation) {
+            throw new Error('Passphrases did not match.');
+        }
+    }
+
+    const vault = await SecretVault.open({ passphrase, path: vaultPath });
+    passphrase = '';
+    try {
+        if (operation === 'set') {
+            const value = await readHidden(`Secret value for "${id}": `);
+            await vault.setSecret(id!, value);
+            console.log(`Stored secret "${id}".`);
+        } else if (operation === 'list') {
+            const ids = vault.listSecrets();
+            console.log(ids.length ? ids.join('\n') : '(no secrets stored)');
+        } else {
+            await vault.deleteSecret(id!);
+            console.log(`Deleted secret "${id}".`);
+        }
+    } finally {
+        vault.close();
+    }
+}
+
+async function main(): Promise<void> {
     const args = process.argv.slice(2);
+    if (args[0] === 'vault') {
+        await runVaultCommand(args.slice(1));
+        return;
+    }
     const tuiFlag = args.includes('--tui') || args.includes('-t');
 
     if (tuiFlag) {
@@ -158,4 +261,7 @@ function main(): void {
     process.exit(exitCode);
 }
 
-main();
+main().catch((error: unknown) => {
+    console.error(`Error: ${error instanceof Error ? error.message : 'Vault operation failed.'}`);
+    process.exitCode = 1;
+});

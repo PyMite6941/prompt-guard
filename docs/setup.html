@@ -56,6 +56,11 @@ prompt-guard examples/clean.txt
 prompt-guard examples/leak.txt</code></pre>
       <p>When a file contains a detected issue, the command prints matches and a PII-redacted preview, then exits with status 1. Clean input exits with status 0.</p>
 
+      <h2>Prepare a local secret vault</h2>
+      <pre><code>prompt-guard vault set deployment-token
+prompt-guard vault list</code></pre>
+      <p>Vault commands require an interactive terminal and hide secret input. Store a strong passphrase; it is needed each time the vault is opened. Harness integrations use the package's <code>SecretVault.withSecret</code> API inside trusted local tool handlers. Never expose the secret value as a model-facing tool result. See the <a href="./usage.html#vault">vault usage and security notes</a>.</p>
+
       <h2>CLI flags</h2>
       <table style="width:100%; border-collapse: collapse; margin: 16px 0;">
         <thead><tr style="text-align:left;"><th style="padding:8px; border-bottom:1px solid var(--line); color:var(--muted);">Flag</th><th style="padding:8px; border-bottom:1px solid var(--line); color:var(--muted);">Description</th></tr></thead>

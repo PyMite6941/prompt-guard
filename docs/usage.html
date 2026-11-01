@@ -58,6 +58,27 @@ prompt-guard examples/leak.txt --ignore=email,creditCard</code></pre>
       </table>
       <p>Supported ignore names: <code>email</code>, <code>creditCard</code>, <code>apiKey</code>, <code>githubToken</code>, <code>awsSecretKey</code>, <code>databaseUrl</code>, <code>jwtToken</code>, <code>stripeKey</code>, <code>sshPrivateKey</code>, <code>ipAddress</code>, <code>phoneNumber</code>, <code>ssn</code>, <code>prompt_injection</code>. Ignored matches are neither reported nor redacted.</p>
 
+      <h2 id="vault">Local secret vault</h2>
+      <p>Store secrets locally under an ID. The CLI hides passphrases and values while typing; the first command creates the encrypted vault.</p>
+      <pre><code>prompt-guard vault set deployment-token
+prompt-guard vault list
+prompt-guard vault delete deployment-token</code></pre>
+      <p>Use a secret from trusted host code with <code>SecretVault.withSecret</code>:</p>
+      <pre><code>import { SecretVault } from '@ai-clyde/promptguard';
+
+      async function deployTool() {
+        const vault = await SecretVault.open({ passphrase: await loadLocalPassphrase() });
+        try {
+          return await vault.withSecret('deployment-token', (token) =>
+            deployApprovedArtifact({ token }),
+          );
+        } finally {
+          vault.close();
+        }
+      }</code></pre>
+      <p class="warning">Do not expose a generic “get secret” tool to the model. Fix the secret ID in host policy, pass it only to an allow-listed local operation, and keep it out of prompts, tool results, logs, and telemetry. A model-controlled shell with the same OS account can bypass application-level restrictions; use harness tool allowlists and process isolation. Prompt Guard cannot prevent a host from sending a resolved value to a cloud API.</p>
+      <p>The vault uses scrypt and AES-256-GCM and stores data in the per-user application data directory. The callback receives a temporary buffer that is zeroed afterward; do not retain or copy it. Use a unique passphrase of at least 12 characters; there is no password recovery or network sync. Set <code>PROMPT_GUARD_VAULT_PATH</code> to use a custom path.</p>
+
       <h2>Scan TypeScript text</h2>
       <pre><code>import { scanText } from '@ai-clyde/promptguard';
 

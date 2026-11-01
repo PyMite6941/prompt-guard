@@ -40,6 +40,16 @@ jobs:
             exit 1
           fi
 
+      - name: Verify npm credentials
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          if [ -z "$NODE_AUTH_TOKEN" ]; then
+            echo "ERROR: Add an npm publish token as the repository secret NPM_TOKEN." >&2
+            exit 1
+          fi
+          npm whoami
+
       - name: Publish to npm
         run: npm publish --access public
         env:

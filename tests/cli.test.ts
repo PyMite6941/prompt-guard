@@ -58,4 +58,10 @@ describe('Prompt Guard CLI', () => {
         expect(code).toBe(1);
         expect(output).toContain('Usage');
     });
+
+    it('does not accept vault input from a non-interactive terminal', () => {
+        const { code, output } = runCli(['vault', 'set', 'test-token']);
+        expect(code).toBe(1);
+        expect(output).toContain('interactive terminal');
+    });
 });

@@ -1,12 +1,20 @@
 {
 	"name": "@ai-clyde/promptguard",
-	"version": "1.0.1",
+	"version": "1.0.2",
 	"description": "Scan prompts for personally identifiable information and prompt-injection attempts.",
 	"main": "./dist/index.js",
 	"types": "./dist/index.d.ts",
+	"exports": {
+		".": {
+			"types": "./dist/index.d.ts",
+			"require": "./dist/index.js",
+			"default": "./dist/index.js"
+		}
+	},
 	"files": [
 		"dist/",
-		"examples/",
+		"examples/clean.txt",
+		"examples/leak.txt",
 		"LICENSE",
 		"README.md"
 	],
@@ -18,15 +26,32 @@
 		"build": "tsc",
 		"test": "vitest run",
 		"dev": "vitest",
-		"pre-commit": "bash scripts/pre-commit.sh"
+		"pre-commit": "bash scripts/pre-commit.sh",
+		"prepublishOnly": "npm test && npm run build"
 	},
 	"keywords": [
 		"prompt-security",
 		"pii",
 		"prompt-injection",
-		"scanner"
+		"scanner",
+		"secrets",
+		"vault"
 	],
+	"engines": {
+		"node": ">=18"
+	},
 	"license": "MIT",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/PyMite6941/prompt-guard.git"
+	},
+	"homepage": "https://github.com/PyMite6941/prompt-guard#readme",
+	"bugs": {
+		"url": "https://github.com/PyMite6941/prompt-guard/issues"
+	},
+	"publishConfig": {
+		"access": "public"
+	},
 	"type": "commonjs",
 	"devDependencies": {
 		"@types/blessed": "^0.1.27",
@@ -37,7 +62,6 @@
 	"dependencies": {
 		"blessed": "^0.1.81",
 		"dotenv": "^16.4.5",
-		"fs": "^0.0.1-security",
 		"openai": "^7.33.0"
 	}
 }
