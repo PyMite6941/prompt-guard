@@ -60,16 +60,22 @@ prompt-guard examples/leak.txt</code></pre>
       <pre><code>prompt-guard vault set deployment-token
 prompt-guard vault popup
 prompt-guard vault catalog
-prompt-guard vault capture prompt.txt</code></pre>
-      <p>The terminal GUI lets you manage vault entries and inspect a redacted metadata preview; it never displays the secret value. CLI vault management prompts for the passphrase without echo. Harness integrations should capture/redact prompts and require human review before sending them to a model; detection is best-effort and unknown secrets can remain. Use <code>SecretVault.withSecret</code> only inside trusted, allow-listed local handlers. Never expose a secret value as a model-facing tool result. See the <a href="./usage.html#vault">vault usage and security notes</a>.</p>
+      prompt-guard vault capture prompt.txt
+      prompt-guard vault export vault-backup.json
+      prompt-guard vault import vault-backup.json</code></pre>
+            <p>The terminal GUI lets you manage vault entries and inspect a redacted metadata preview; it never displays the secret value. CLI vault management prompts for the passphrase without echo. Export creates an encrypted backup; import verifies it and replaces the default vault, so back up existing data first. Harness integrations should capture/redact prompts and require human review before sending them to a model; detection is best-effort and unknown secrets can remain. Use <code>SecretVault.withSecret</code> only inside trusted, allow-listed local handlers. Never expose a secret value as a model-facing tool result. See the <a href="./usage.html#vault">vault usage and security notes</a>.</p>
 
       <h2>CLI flags</h2>
       <table style="width:100%; border-collapse: collapse; margin: 16px 0;">
         <thead><tr style="text-align:left;"><th style="padding:8px; border-bottom:1px solid var(--line); color:var(--muted);">Flag</th><th style="padding:8px; border-bottom:1px solid var(--line); color:var(--muted);">Description</th></tr></thead>
         <tbody>
           <tr style="border-bottom:1px solid var(--line);"><td style="padding:8px; color:var(--accent); font-family:monospace;"><code>--ignore=cat1,cat2</code></td><td style="padding:8px;">Skip comma-separated categories (email, creditCard, apiKey, githubToken, ssn, prompt_injection, etc.)</td></tr>
+          <tr style="border-bottom:1px solid var(--line);"><td style="padding:8px; color:var(--accent); font-family:monospace;"><code>--exclude=path1,path2</code></td><td style="padding:8px;">Skip paths relative to a scanned directory</td></tr>
           <tr style="border-bottom:1px solid var(--line);"><td style="padding:8px; color:var(--accent); font-family:monospace;"><code>--json</code></td><td style="padding:8px;">Output machine-readable JSON results</td></tr>
           <tr style="border-bottom:1px solid var(--line);"><td style="padding:8px; color:var(--accent); font-family:monospace;"><code>--sarif</code></td><td style="padding:8px;">Output SARIF 2.1.0 log for code-scanning tools</td></tr>
+          <tr style="border-bottom:1px solid var(--line);"><td style="padding:8px; color:var(--accent); font-family:monospace;"><code>--html[=file]</code></td><td style="padding:8px;">Write an HTML report without detected values</td></tr>
+          <tr style="border-bottom:1px solid var(--line);"><td style="padding:8px; color:var(--accent); font-family:monospace;"><code>--junit[=file]</code></td><td style="padding:8px;">Write a JUnit XML report without detected values</td></tr>
+          <tr style="border-bottom:1px solid var(--line);"><td style="padding:8px; color:var(--accent); font-family:monospace;"><code>--audit-log[=file]</code></td><td style="padding:8px;">Append JSON-lines scan metadata without detected values</td></tr>
           <tr style="border-bottom:1px solid var(--line);"><td style="padding:8px; color:var(--accent); font-family:monospace;"><code>--partial-redaction</code></td><td style="padding:8px;">Show last 4 characters instead of full redaction</td></tr>
           <tr style="border-bottom:1px solid var(--line);"><td style="padding:8px; color:var(--accent); font-family:monospace;"><code>--config=path</code></td><td style="padding:8px;">Load configuration from a .promptguardrc file</td></tr>
           <tr style="border-bottom:1px solid var(--line);"><td style="padding:8px; color:var(--accent); font-family:monospace;"><code>--tui</code> / <code>-t</code></td><td style="padding:8px;">Launch the terminal user interface</td></tr>

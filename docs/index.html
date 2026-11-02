@@ -79,7 +79,7 @@
       <div class="hero">
         <div class="eyebrow">Local-first prompt scanning</div>
         <h1>Catch sensitive data before it reaches your AI.</h1>
-        <p class="lead">Prompt Guard checks text for common personally identifiable information and prompt-injection patterns, right in your application or from the command line.</p>
+        <p class="lead">Prompt Guard checks text for common personally identifiable information and prompt-injection patterns, right in your application or from the command line. Its optional local vault keeps secret values encrypted and out of model-facing tool results by default.</p>
         <div class="actions">
           <a class="button button-primary" href="#quick-start">Get started</a>
           <a class="button" href="https://github.com/PyMite6941/prompt-guard">View on GitHub</a>
@@ -112,6 +112,10 @@
             <article class="feature">
               <h3>Flag injection phrases</h3>
               <p>Identify common prompt-injection language, including attempts to ignore previous instructions or expose a system prompt.</p>
+            </article>
+            <article class="feature">
+              <h3>Keep credentials local</h3>
+              <p>Store secrets in an encrypted local vault and expose only IDs and safe metadata to harness tools. Detection is best-effort; review captured prompts before sending them to a model.</p>
             </article>
           </div>
           <p class="note">Pattern-based scanning is best-effort, can produce false positives or miss novel formats, and is not a substitute for application-specific security controls. Injection phrases are reported but not removed from the sanitized text.</p>
@@ -148,6 +152,5 @@ const result = scanText(prompt);</pre>
           <span><a href="https://github.com/PyMite6941/prompt-guard">Source on GitHub</a></span>
         </div>
       </footer>
-    </footer>
   </body>
 </html>
