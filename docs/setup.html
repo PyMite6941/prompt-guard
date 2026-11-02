@@ -7,33 +7,23 @@
     <meta name="description" content="Set up Prompt Guard from source or install from npm.">
     <link rel="icon" type="image/svg+xml" href="./favicon.svg">
     <title>Setup — Prompt Guard</title>
-    <style>
-      :root { color-scheme: dark; font-family: system-ui, sans-serif; background: #101827; color: #edf2f7; --muted: #a9b6c8; --line: #28374c; --accent: #73e0bd; }
-      * { box-sizing: border-box; }
-      body { margin: 0; line-height: 1.65; }
-      a { color: var(--accent); }
-      header, footer { border-color: var(--line); border-style: solid; }
-      header { border-width: 0 0 1px; padding: 18px 0; }
-      footer { border-width: 1px 0 0; padding: 18px 0; color: var(--muted); }
-      .wrap { width: min(760px, calc(100% - 36px)); margin: 0 auto; }
-      nav { display: flex; justify-content: space-between; gap: 16px; }
-      nav a:first-child { color: #edf2f7; font-weight: 750; text-decoration: none; }
-      main { padding: 54px 0 70px; }
-      h1, h2 { line-height: 1.2; letter-spacing: -.03em; }
-      h1 { font-size: clamp(2.3rem, 7vw, 3.6rem); }
-      h2 { margin-top: 2.4em; }
-      p, li { color: var(--muted); }
-      code, pre { font-family: ui-monospace, Consolas, monospace; }
-      code { color: var(--accent); }
-      pre { overflow-x: auto; padding: 16px; border: 1px solid var(--line); border-radius: 8px; background: #0b1220; color: #edf2f7; }
-      .warning { padding: 14px 16px; border-left: 3px solid var(--accent); background: #131f30; }
-      .tip { padding: 14px 16px; border-left: 3px solid var(--line); background: #0b1220; }
-    </style>
+    <link rel="stylesheet" href="./site.css">
   </head>
   <body>
-    <header><nav class="wrap"><a href="./">Prompt Guard</a><span><a href="./usage.html">Usage</a></span></nav></header>
-    <main class="wrap">
-      <p><a href="./">Home</a> / Setup</p>
+    <header>
+      <nav class="wrap" aria-label="Main navigation">
+        <a class="brand" href="./">Prompt Guard</a>
+        <div class="nav-links">
+          <a href="./#features">Features</a>
+          <a href="./#quick-start">Quick start</a>
+          <a href="./setup.html" aria-current="page">Setup</a>
+          <a href="./usage.html">Usage</a>
+          <a href="https://github.com/PyMite6941/prompt-guard">GitHub</a>
+        </div>
+      </nav>
+    </header>
+    <main class="wrap docs-main">
+      <p class="page-crumb"><a href="./">Home</a> / Setup</p>
       <h1>Set up Prompt Guard</h1>
       <p>Prompt Guard is a TypeScript package with a command-line tool. Install it from npm or build from source.</p>
 
@@ -60,25 +50,25 @@ prompt-guard examples/leak.txt</code></pre>
       <pre><code>prompt-guard vault set deployment-token
 prompt-guard vault popup
 prompt-guard vault catalog
-      prompt-guard vault capture prompt.txt
-      prompt-guard vault export vault-backup.json
-      prompt-guard vault import vault-backup.json</code></pre>
-            <p>The terminal GUI lets you manage vault entries and inspect a redacted metadata preview; it never displays the secret value. CLI vault management prompts for the passphrase without echo. Export creates an encrypted backup; import verifies it and replaces the default vault, so back up existing data first. Harness integrations should capture/redact prompts and require human review before sending them to a model; detection is best-effort and unknown secrets can remain. Use <code>SecretVault.withSecret</code> only inside trusted, allow-listed local handlers. Never expose a secret value as a model-facing tool result. See the <a href="./usage.html#vault">vault usage and security notes</a>.</p>
+prompt-guard vault capture prompt.txt
+prompt-guard vault export vault-backup.json
+prompt-guard vault import vault-backup.json</code></pre>
+      <p>The terminal GUI lets you manage vault entries and inspect a redacted metadata preview; it never displays the secret value. CLI vault management prompts for the passphrase without echo. Export creates an encrypted backup; import verifies it and replaces the default vault, so back up existing data first. Harness integrations should capture/redact prompts and require human review before sending them to a model; detection is best-effort and unknown secrets can remain. Use <code>SecretVault.withSecret</code> only inside trusted, allow-listed local handlers. Never expose a secret value as a model-facing tool result. See the <a href="./usage.html#vault">vault usage and security notes</a>.</p>
 
       <h2>CLI flags</h2>
-      <table style="width:100%; border-collapse: collapse; margin: 16px 0;">
-        <thead><tr style="text-align:left;"><th style="padding:8px; border-bottom:1px solid var(--line); color:var(--muted);">Flag</th><th style="padding:8px; border-bottom:1px solid var(--line); color:var(--muted);">Description</th></tr></thead>
+      <table>
+        <thead><tr><th>Flag</th><th>Description</th></tr></thead>
         <tbody>
-          <tr style="border-bottom:1px solid var(--line);"><td style="padding:8px; color:var(--accent); font-family:monospace;"><code>--ignore=cat1,cat2</code></td><td style="padding:8px;">Skip comma-separated categories (email, creditCard, apiKey, githubToken, ssn, prompt_injection, etc.)</td></tr>
-          <tr style="border-bottom:1px solid var(--line);"><td style="padding:8px; color:var(--accent); font-family:monospace;"><code>--exclude=path1,path2</code></td><td style="padding:8px;">Skip paths relative to a scanned directory</td></tr>
-          <tr style="border-bottom:1px solid var(--line);"><td style="padding:8px; color:var(--accent); font-family:monospace;"><code>--json</code></td><td style="padding:8px;">Output machine-readable JSON results</td></tr>
-          <tr style="border-bottom:1px solid var(--line);"><td style="padding:8px; color:var(--accent); font-family:monospace;"><code>--sarif</code></td><td style="padding:8px;">Output SARIF 2.1.0 log for code-scanning tools</td></tr>
-          <tr style="border-bottom:1px solid var(--line);"><td style="padding:8px; color:var(--accent); font-family:monospace;"><code>--html[=file]</code></td><td style="padding:8px;">Write an HTML report without detected values</td></tr>
-          <tr style="border-bottom:1px solid var(--line);"><td style="padding:8px; color:var(--accent); font-family:monospace;"><code>--junit[=file]</code></td><td style="padding:8px;">Write a JUnit XML report without detected values</td></tr>
-          <tr style="border-bottom:1px solid var(--line);"><td style="padding:8px; color:var(--accent); font-family:monospace;"><code>--audit-log[=file]</code></td><td style="padding:8px;">Append JSON-lines scan metadata without detected values</td></tr>
-          <tr style="border-bottom:1px solid var(--line);"><td style="padding:8px; color:var(--accent); font-family:monospace;"><code>--partial-redaction</code></td><td style="padding:8px;">Show last 4 characters instead of full redaction</td></tr>
-          <tr style="border-bottom:1px solid var(--line);"><td style="padding:8px; color:var(--accent); font-family:monospace;"><code>--config=path</code></td><td style="padding:8px;">Load configuration from a .promptguardrc file</td></tr>
-          <tr style="border-bottom:1px solid var(--line);"><td style="padding:8px; color:var(--accent); font-family:monospace;"><code>--tui</code> / <code>-t</code></td><td style="padding:8px;">Launch the terminal user interface</td></tr>
+          <tr><td><code>--ignore=cat1,cat2</code></td><td>Skip comma-separated categories (email, creditCard, apiKey, githubToken, ssn, prompt_injection, etc.)</td></tr>
+          <tr><td><code>--exclude=path1,path2</code></td><td>Skip paths relative to a scanned directory</td></tr>
+          <tr><td><code>--json</code></td><td>Output machine-readable JSON results</td></tr>
+          <tr><td><code>--sarif</code></td><td>Output SARIF 2.1.0 log for code-scanning tools</td></tr>
+          <tr><td><code>--html[=file]</code></td><td>Write an HTML report without detected values</td></tr>
+          <tr><td><code>--junit[=file]</code></td><td>Write a JUnit XML report without detected values</td></tr>
+          <tr><td><code>--audit-log[=file]</code></td><td>Append JSON-lines scan metadata without detected values</td></tr>
+          <tr><td><code>--partial-redaction</code></td><td>Show last 4 characters instead of full redaction</td></tr>
+          <tr><td><code>--config=path</code></td><td>Load configuration from a .promptguardrc file</td></tr>
+          <tr><td><code>--tui</code> / <code>-t</code></td><td>Launch the terminal user interface</td></tr>
         </tbody>
       </table>
 
@@ -92,6 +82,11 @@ npm run build</code></pre>
 
       <p>Continue to the <a href="./usage.html">usage guide</a> for detection options, TypeScript examples, and guarded OpenAI calls.</p>
     </main>
-    <footer><div class="wrap">Prompt Guard · MIT License · <a href="https://github.com/PyMite6941/prompt-guard">GitHub repository</a></div></footer>
+    <footer>
+      <div class="wrap">
+        <span>Prompt Guard · MIT License</span>
+        <span><a href="https://github.com/PyMite6941/prompt-guard">Source on GitHub</a></span>
+      </div>
+    </footer>
   </body>
 </html>
