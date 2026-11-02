@@ -1,8 +1,8 @@
 # Prompt Guard
 
-Project site: [Prompt Guard](https://pymite6941.is-a.dev/prompt-guard/)
+Project site: [Prompt Guard](https://pymite6941.github.io/prompt-guard/)
 
-Detailed guides: [Setup](docs/setup.html) · [Usage](docs/usage.html)
+Detailed guides: [Setup](https://pymite6941.github.io/prompt-guard/setup.html) · [Usage](https://pymite6941.github.io/prompt-guard/usage.html)
 
 Prompt Guard is a lightweight TypeScript scanner that flags personally identifiable information (PII) and prompt-injection phrases **before** a prompt reaches an AI model. The `scanText` scanner runs entirely in memory — no network calls. The optional `callAIGuarded` helper runs the scan, then forwards accepted prompts to OpenAI or any OpenAI-compatible endpoint (including a local Ollama model for **zero API cost**).
 
