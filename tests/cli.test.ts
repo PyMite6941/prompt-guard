@@ -59,9 +59,16 @@ describe('Prompt Guard CLI', () => {
         expect(output).toContain('Usage');
     });
 
-    it('does not accept vault input from a non-interactive terminal', () => {
+    it('does not accept vault secret value input from a non-interactive terminal', () => {
         const { code, output } = runCli(['vault', 'set', 'test-token']);
         expect(code).toBe(1);
         expect(output).toContain('interactive terminal');
+    });
+
+    it('does not provide a CLI command that prints decrypted secrets', () => {
+        const { code, output } = runCli(['vault', 'get', 'test-token']);
+        expect(code).toBe(1);
+        expect(output).toContain('Usage: prompt-guard vault');
+        expect(output).not.toContain('private');
     });
 });

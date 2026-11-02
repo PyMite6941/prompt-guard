@@ -62,7 +62,17 @@ prompt-guard examples/leak.txt --ignore=email,creditCard</code></pre>
       <p>Store secrets locally under an ID. The CLI hides passphrases and values while typing; the first command creates the encrypted vault.</p>
       <pre><code>prompt-guard vault set deployment-token
 prompt-guard vault list
+prompt-guard vault catalog
+prompt-guard vault capture prompt.txt
+prompt-guard vault popup
 prompt-guard vault delete deployment-token</code></pre>
+      <p><code>vault popup</code> opens the interactive terminal GUI. Add secrets, edit labels, remove entries, and inspect a safe metadata preview; it never displays a decrypted value. <code>vault catalog</code> returns only IDs, generic titles, a fixed redacted preview, and safe-use guidance.</p>
+      <p>Capture and redact locally, then require a human to review and explicitly approve the prompt before any model request. Detection is best-effort; the capture result always sets <code>manualReviewRequired: true</code>, since unknown sensitive values can remain:</p>
+      <pre><code>const protectedPrompt = await vault.captureAndRedactPrompt(incomingPrompt);
+const approvedPrompt = await reviewPromptLocally(protectedPrompt);
+const answer = await callAIGuarded(approvedPrompt, { autoSanitize: true });</code></pre>
+      <p><code>reviewPromptLocally</code> is an application-provided human review step, not a vault method. Do not pipe <code>prompt-guard vault capture</code> output directly into a model. Secret IDs, names, and tags are encrypted at rest; older vaults migrate automatically when opened.</p>
+      <p>For harness registration, <code>createVaultCatalogTool(vault)</code> returns a zero-argument tool descriptor whose handler returns only the safe catalog. Adapt it to your harness’s tool schema; never register <code>withSecret</code> as an agent tool.</p>
       <p>Use a secret from trusted host code with <code>SecretVault.withSecret</code>:</p>
       <pre><code>import { SecretVault } from '@ai-clyde/promptguard';
 
@@ -76,8 +86,8 @@ prompt-guard vault delete deployment-token</code></pre>
           vault.close();
         }
       }</code></pre>
-      <p class="warning">Do not expose a generic “get secret” tool to the model. Fix the secret ID in host policy, pass it only to an allow-listed local operation, and keep it out of prompts, tool results, logs, and telemetry. A model-controlled shell with the same OS account can bypass application-level restrictions; use harness tool allowlists and process isolation. Prompt Guard cannot prevent a host from sending a resolved value to a cloud API.</p>
-      <p>The vault uses scrypt and AES-256-GCM and stores data in the per-user application data directory. The callback receives a temporary buffer that is zeroed afterward; do not retain or copy it. Use a unique passphrase of at least 12 characters; there is no password recovery or network sync. Set <code>PROMPT_GUARD_VAULT_PATH</code> to use a custom path.</p>
+      <p class="warning">Never expose a generic “get secret” tool to the model. Bind fixed IDs in host policy, pass values only to allow-listed local operations, and keep them out of prompts, tool results, logs, and telemetry. A model-controlled shell with the same OS account can bypass application-level restrictions; use harness tool allowlists and process isolation. Detection is pattern-based and cannot identify every possible secret.</p>
+      <p>The vault uses scrypt and AES-256-GCM and stores data in the per-user application data directory. The callback receives a temporary buffer that is zeroed afterward; do not retain or copy it. Use a unique passphrase of at least 12 characters; there is no password recovery or network sync. CLI commands require a terminal and do not accept passphrases through environment variables. Set <code>PROMPT_GUARD_VAULT_PATH</code> to use a custom path.</p>
 
       <h2>Scan TypeScript text</h2>
       <pre><code>import { scanText } from '@ai-clyde/promptguard';

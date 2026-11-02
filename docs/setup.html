@@ -58,8 +58,10 @@ prompt-guard examples/leak.txt</code></pre>
 
       <h2>Prepare a local secret vault</h2>
       <pre><code>prompt-guard vault set deployment-token
-prompt-guard vault list</code></pre>
-      <p>Vault commands require an interactive terminal and hide secret input. Store a strong passphrase; it is needed each time the vault is opened. Harness integrations use the package's <code>SecretVault.withSecret</code> API inside trusted local tool handlers. Never expose the secret value as a model-facing tool result. See the <a href="./usage.html#vault">vault usage and security notes</a>.</p>
+prompt-guard vault popup
+prompt-guard vault catalog
+prompt-guard vault capture prompt.txt</code></pre>
+      <p>The terminal GUI lets you manage vault entries and inspect a redacted metadata preview; it never displays the secret value. CLI vault management prompts for the passphrase without echo. Harness integrations should capture/redact prompts and require human review before sending them to a model; detection is best-effort and unknown secrets can remain. Use <code>SecretVault.withSecret</code> only inside trusted, allow-listed local handlers. Never expose a secret value as a model-facing tool result. See the <a href="./usage.html#vault">vault usage and security notes</a>.</p>
 
       <h2>CLI flags</h2>
       <table style="width:100%; border-collapse: collapse; margin: 16px 0;">

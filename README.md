@@ -157,18 +157,97 @@ passphrases and secret values without echoing them, and never accepts secret
 values as command-line arguments:
 
 ```sh
-prompt-guard vault set deployment-token
-prompt-guard vault list
+prompt-guard vault set deployment-token        # interactive: enter passphrase + value
+prompt-guard vault list                        # print IDs only
 prompt-guard vault delete deployment-token
+prompt-guard vault catalog                     # safe agent-visible metadata only
+prompt-guard vault capture prompt.txt          # store detections and print redacted prompt
+prompt-guard vault popup                       # interactive terminal GUI
 ```
 
-The first `set` creates an encrypted vault and asks you to confirm its
-passphrase. Later commands ask for the passphrase again. `list` prints IDs only;
-there is intentionally no command that prints a secret. The vault is stored
-under the operating system's per-user data directory. Set
-`PROMPT_GUARD_VAULT_PATH` to choose another location.
+### Interactive popup GUI (`vault popup`)
 
-Trusted host code can pass a secret to a local operation using the package API:
+`prompt-guard vault popup` opens a `blessed` terminal GUI for managing secrets
+without typing commands:
+
+- **Name** — e.g. `NVIDIA NIM API` (typed manually)
+- **Tag** — pick from `password | API | key | token | secret | other`
+- **Secret ID** — auto-derived from the name (slugified, de-duplicated); visible
+  in the list but **read-only**, not editable
+- **Value** — hidden input, encrypted at rest with AES-256-GCM
+
+Keys: `a` add, `v` show a safe metadata preview, `d` delete (confirm), `r`
+refresh, `q`/Esc quit, `Tab` switches focus. The popup never reveals secret
+values. It requires an interactive terminal.
+
+### Capture and redact prompts locally
+
+Before a prompt reaches a model, pass it through the already-unlocked vault.
+Known stored values are replaced, and scanner-detected PII/credentials are
+encrypted into the vault and replaced with opaque IDs:
+
+```ts
+const protectedPrompt = await vault.captureAndRedactPrompt(incomingPrompt);
+// Detection is best-effort. Require a human to review the prompt locally;
+// do not send it to a model until that review explicitly approves it.
+const approvedPrompt = await reviewPromptLocally(protectedPrompt);
+const answer = await callAIGuarded(approvedPrompt, { autoSanitize: true });
+```
+
+`reviewPromptLocally` above represents a human-review step that your application
+must implement; the vault does not approve or forward prompts. `manualReviewRequired`
+is always true because detection is best-effort and cannot identify every
+possible secret. The `capture` CLI command prints the capture result for local
+review; do not pipe its output directly to a model. It prompts for the vault
+passphrase without echo and never reads it from an environment variable or
+command-line argument. `PROMPT_GUARD_VAULT_PATH` selects another vault file.
+
+The first `set` creates an encrypted vault and asks you to confirm its
+passphrase. CLI management commands require an interactive terminal. There is
+deliberately no `vault get` command or passphrase environment variable, so
+automation cannot accidentally print a resolved value into model-visible
+stdout.
+
+### Name and tag metadata
+
+Each secret can carry a human-readable `name` and a `tag` (e.g. `API`,
+`password`, `token`). IDs, names, and tags are encrypted at rest; the popup and
+trusted package API can display local labels. Version 1 vaults are migrated to
+the encrypted-metadata format when opened:
+
+```ts
+import { SecretVault } from '@ai-clyde/promptguard';
+
+const vault = await SecretVault.open({ passphrase, path });
+await vault.setSecret('nvidia-nim-api', '<api-key>');
+await vault.setSecretMeta('nvidia-nim-api', { name: 'NVIDIA NIM API', tag: 'API' });
+const listed = vault.listSecretsWithMeta(); // local metadata for trusted UI
+vault.close();
+```
+
+For an agent, use only `getAgentCatalog()` or the output of `vault catalog`.
+The catalog contains an ID, a generic title, a fixed redacted preview, and
+host-operation guidance—never the stored value, a suffix, or arbitrary
+user-supplied labels. `createVaultCatalogTool(vault)` provides a
+zero-argument, model-facing catalog tool that can be adapted to a harness's
+tool-registration API:
+
+```ts
+import { createVaultCatalogTool } from '@ai-clyde/promptguard';
+
+const catalogTool = createVaultCatalogTool(vault);
+registerHarnessTool({
+  name: catalogTool.name,
+  description: catalogTool.description,
+  inputSchema: catalogTool.inputSchema,
+  execute: catalogTool.execute,
+});
+```
+
+Do not register a model-facing tool that calls `withSecret`. Bind IDs inside
+host-controlled local operations instead.
+
+### Trusted host code usage
 
 ```ts
 import { SecretVault } from '@ai-clyde/promptguard';
@@ -190,10 +269,10 @@ async function runApprovedDeployment() {
 
 `withSecret` supplies a temporary `Buffer` to trusted local host code and
 zeroes that buffer after the callback completes; do not retain or copy it.
-Integrate it inside a
-harness's local tool handler, not as a tool that returns the secret. Pass only
-the minimum credential to an allow-listed operation and ensure the handler
-does not put it in prompts, tool results, logs, traces, or telemetry. A
+Bind a fixed ID to a host-controlled, allow-listed local operation; do not make
+a generic model-facing “get secret” tool. Return only non-secret outcomes.
+Ensure the handler does not put credentials in prompts, tool results, logs,
+traces, or telemetry. A
 model-controlled shell or unrestricted local process with the same OS account
 can bypass application-level restrictions; use your harness's tool allowlists
 and process isolation for that threat model. Prompt Guard cannot guarantee

@@ -8,6 +8,7 @@ import {
 import { promises as fs } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
+import { scanText } from './scanner';
 const VERIFIER = Buffer.from('prompt-guard-vault-v1');
 const KEY_LENGTH = 32;
 const SCRYPT_OPTIONS = { N: 32768, r: 8, p: 1, maxmem: 64 * 1024 * 1024 };
@@ -18,11 +19,96 @@ interface EncryptedValue {
     ciphertext: string;
 }
 
+export interface SecretMeta {
+    name?: string | undefined;
+    tag?: string | undefined;
+}
+
+export interface AgentSecretInfo {
+    id: string;
+    title: string;
+    preview: string;
+    usage: string;
+}
+
+export interface CapturedPrompt {
+    prompt: string;
+    secrets: AgentSecretInfo[];
+    manualReviewRequired: true;
+    warning: string;
+}
+
+const CAPTURE_WARNING =
+    'Secret detection is best-effort. Manually review the redacted prompt for unrecognized credentials or sensitive data before sending it to any model.';
+
+export interface AgentCatalogTool {
+    name: 'prompt_guard_vault_catalog';
+    description: string;
+    inputSchema: {
+        type: 'object';
+        properties: Record<string, never>;
+        additionalProperties: false;
+    };
+    execute: () => Promise<AgentSecretInfo[]>;
+}
+
+const SECRET_TITLES: Record<string, string> = {
+    apiKey: 'API credential',
+    api: 'API credential',
+    key: 'API credential',
+    password: 'Password',
+    token: 'Authentication token',
+    secret: 'Stored credential',
+    githubToken: 'GitHub credential',
+    awsSecretKey: 'Cloud credential',
+    databaseUrl: 'Database credential',
+    jwtToken: 'Authentication token',
+    stripeKey: 'Payment credential',
+    sshPrivateKey: 'SSH credential',
+    creditCard: 'Payment card',
+    ssn: 'Identity number',
+    email: 'Email address',
+    phoneNumber: 'Phone number',
+    ipAddress: 'IP address',
+    socialHandle: 'Social handle',
+};
+
+const AGENT_PREVIEW = '[value hidden; available only to an approved local operation]';
+const AGENT_USAGE =
+    'Use this ID only in a host-configured, allow-listed local operation. Never request, print, log, or return the secret value.';
+
+export function createVaultCatalogTool(vault: SecretVault): AgentCatalogTool {
+    return {
+        name: 'prompt_guard_vault_catalog',
+        description:
+            'Lists safe secret IDs, generic titles, and redacted previews. This tool never returns secret values.',
+        inputSchema: {
+            type: 'object',
+            properties: {},
+            additionalProperties: false,
+        },
+        execute: () => vault.getAgentCatalog(),
+    };
+}
+
 interface VaultDocument {
+    version: 2;
+    salt: string;
+    verifier: EncryptedValue;
+    secrets: Record<string, EncryptedValue>;
+    meta: Record<string, EncryptedValue>;
+}
+
+interface LegacyVaultDocument {
     version: 1;
     salt: string;
     verifier: EncryptedValue;
     secrets: Record<string, EncryptedValue>;
+    meta: Record<string, SecretMeta>;
+}
+
+interface VaultMetadata extends SecretMeta {
+    id: string;
 }
 
 export interface SecretVaultOptions {
@@ -60,7 +146,7 @@ function isEncryptedValue(value: unknown): value is EncryptedValue {
     );
 }
 
-function parseDocument(serialized: string): VaultDocument {
+function parseDocument(serialized: string): VaultDocument | LegacyVaultDocument {
     let parsed: unknown;
     try {
         parsed = JSON.parse(serialized);
@@ -68,7 +154,7 @@ function parseDocument(serialized: string): VaultDocument {
         throw new Error('Vault file is not valid JSON.');
     }
 
-    if (!isRecord(parsed) || parsed.version !== 1) {
+    if (!isRecord(parsed) || (parsed.version !== 1 && parsed.version !== 2)) {
         throw new Error('Vault file has an unsupported or invalid format.');
     }
 
@@ -88,12 +174,61 @@ function parseDocument(serialized: string): VaultDocument {
         }
         secretEntries.push([id, value]);
     }
+    const secretIds = new Set(secretEntries.map(([id]) => id));
+
+    if (parsed.version === 2) {
+        if (!isRecord(parsed.meta)) {
+            throw new Error('Vault file has an unsupported or invalid format.');
+        }
+        const meta: Record<string, EncryptedValue> = {};
+        for (const [id, value] of Object.entries(parsed.meta)) {
+            if (
+                !/^[0-9a-f]{32}$/i.test(id) ||
+                !secretIds.has(id) ||
+                !isEncryptedValue(value)
+            ) {
+                throw new Error('Vault file has an unsupported or invalid format.');
+            }
+            meta[id] = value;
+        }
+        if (Object.keys(meta).length !== secretEntries.length) {
+            throw new Error('Vault file has an unsupported or invalid format.');
+        }
+        return {
+            version: 2,
+            salt: parsed.salt,
+            verifier: parsed.verifier,
+            secrets: Object.fromEntries(secretEntries),
+            meta,
+        };
+    }
+
+    const meta: Record<string, SecretMeta> = {};
+    if (isRecord(parsed.meta)) {
+        for (const [id, value] of Object.entries(parsed.meta)) {
+            if (
+                !/^[a-zA-Z0-9._-]{1,128}$/.test(id) ||
+                !secretIds.has(id) ||
+                !isRecord(value)
+            ) {
+                throw new Error('Vault file has an unsupported or invalid format.');
+            }
+            const name = typeof value.name === 'string' ? value.name : undefined;
+            const tag = typeof value.tag === 'string' ? value.tag : undefined;
+            if (name !== undefined || tag !== undefined) {
+                meta[id] = { name, tag };
+            } else {
+                meta[id] = {};
+            }
+        }
+    }
 
     return {
         version: 1,
         salt: parsed.salt,
         verifier: parsed.verifier,
         secrets: Object.fromEntries(secretEntries),
+        meta,
     };
 }
 
@@ -128,6 +263,38 @@ function decrypt(key: Buffer, encrypted: EncryptedValue): Buffer {
         decipher.update(Buffer.from(encrypted.ciphertext, 'hex')),
         decipher.final(),
     ]);
+}
+
+function encryptMeta(key: Buffer, meta: VaultMetadata): EncryptedValue {
+    const plaintext = Buffer.from(JSON.stringify(meta), 'utf8');
+    try {
+        return encrypt(key, plaintext);
+    } finally {
+        plaintext.fill(0);
+    }
+}
+
+function decryptMeta(key: Buffer, encrypted: EncryptedValue): VaultMetadata {
+    const plaintext = decrypt(key, encrypted);
+    try {
+        const parsed: unknown = JSON.parse(plaintext.toString('utf8'));
+        if (!isRecord(parsed)) {
+            throw new Error('Vault metadata is corrupted.');
+        }
+        if (typeof parsed.id !== 'string') {
+            throw new Error('Vault metadata is corrupted.');
+        }
+        const name = typeof parsed.name === 'string' ? parsed.name : undefined;
+        const tag = typeof parsed.tag === 'string' ? parsed.tag : undefined;
+        return { id: parsed.id, name, tag };
+    } catch (error) {
+        if (error instanceof SyntaxError) {
+            throw new Error('Vault metadata is corrupted.');
+        }
+        throw error;
+    } finally {
+        plaintext.fill(0);
+    }
 }
 
 export class SecretVault {
@@ -174,16 +341,47 @@ export class SecretVault {
                 throw new Error('Incorrect vault passphrase or corrupted vault file.');
             }
             verifier.fill(0);
+            if (document.version === 1) {
+                const secrets: Record<string, EncryptedValue> = {};
+                const meta: Record<string, EncryptedValue> = {};
+                for (const [id, encryptedSecret] of Object.entries(document.secrets)) {
+                    let storageId = randomBytes(16).toString('hex');
+                    while (Object.hasOwn(secrets, storageId)) {
+                        storageId = randomBytes(16).toString('hex');
+                    }
+                    secrets[storageId] = encryptedSecret;
+                    meta[storageId] = encryptMeta(key, {
+                        id,
+                        ...(document.meta[id] ?? {}),
+                    });
+                }
+                const migrated: VaultDocument = {
+                    version: 2,
+                    salt: document.salt,
+                    verifier: document.verifier,
+                    secrets,
+                    meta,
+                };
+                const vault = new SecretVault(vaultPath, key, migrated);
+                try {
+                    await vault.persist(vault.document);
+                } catch (error) {
+                    key.fill(0);
+                    throw error;
+                }
+                return vault;
+            }
             return new SecretVault(vaultPath, key, document);
         }
 
         const salt = randomBytes(16);
         const key = await deriveKey(options.passphrase, salt);
         const document: VaultDocument = {
-            version: 1,
+            version: 2,
             salt: salt.toString('hex'),
             verifier: encrypt(key, VERIFIER),
             secrets: {},
+            meta: {},
         };
         const vault = new SecretVault(vaultPath, key, document);
         try {
@@ -196,8 +394,60 @@ export class SecretVault {
     }
 
     listSecrets(): string[] {
+        return this.listSecretsWithMeta().map(({ id }) => id);
+    }
+
+    listSecretsWithMeta(): Array<{ id: string; meta: SecretMeta }> {
         this.ensureOpen();
-        return Object.keys(this.document.secrets).sort();
+        return Object.keys(this.document.secrets)
+            .map((storageId) => {
+                const metadata = this.readMetadata(storageId);
+                return { id: metadata.id, meta: this.publicMeta(metadata) };
+            })
+            .sort((a, b) => a.id.localeCompare(b.id));
+    }
+
+    getSecretMeta(id: string): SecretMeta | undefined {
+        this.ensureOpen();
+        this.validateId(id);
+        const storageId = this.findStorageId(id);
+        const metadata = storageId ? this.readMetadata(storageId) : undefined;
+        return metadata ? this.publicMeta(metadata) : undefined;
+    }
+
+    async setSecretMeta(id: string, meta: SecretMeta): Promise<void> {
+        this.ensureOpen();
+        this.validateId(id);
+        const storageId = this.findStorageId(id);
+        if (!storageId) {
+            throw new Error(`Secret "${id}" was not found.`);
+        }
+        for (const [field, value] of Object.entries(meta)) {
+            if (
+                value !== undefined &&
+                (value.length > 120 ||
+                    /[\u0000-\u001f\u007f]/.test(value) ||
+                    !/^[\p{L}\p{N} ._:/+-]*$/u.test(value))
+            ) {
+                throw new Error(`Secret metadata "${field}" contains unsupported characters.`);
+            }
+        }
+        await this.withSecret(id, (secret) => {
+            const value = secret.toString('utf8').toLocaleLowerCase();
+            if (
+                Object.values(meta).some(
+                    (entry) => entry !== undefined && entry.toLocaleLowerCase().includes(value),
+                )
+            ) {
+                throw new Error('Secret metadata must not contain the secret value.');
+            }
+        });
+        const document: VaultDocument = {
+            ...this.document,
+            meta: { ...this.document.meta, [storageId]: encryptMeta(this.key, { id, ...meta }) },
+        };
+        await this.persist(document);
+        this.document = document;
     }
 
     async setSecret(id: string, value: string): Promise<void> {
@@ -205,6 +455,9 @@ export class SecretVault {
         this.validateId(id);
         if (value.length === 0) {
             throw new Error('Secret value cannot be empty.');
+        }
+        if (value.toLocaleLowerCase().includes(id.toLocaleLowerCase())) {
+            throw new Error('Secret ID must not appear inside the secret value.');
         }
 
         const plaintext = Buffer.from(value, 'utf8');
@@ -214,9 +467,19 @@ export class SecretVault {
         } finally {
             plaintext.fill(0);
         }
+        const existingStorageId = this.findStorageId(id);
+        let storageId = existingStorageId ?? randomBytes(16).toString('hex');
+        while (!existingStorageId && Object.hasOwn(this.document.secrets, storageId)) {
+            storageId = randomBytes(16).toString('hex');
+        }
         const document: VaultDocument = {
             ...this.document,
-            secrets: { ...this.document.secrets, [id]: encrypted },
+            secrets: { ...this.document.secrets, [storageId]: encrypted },
+            meta: {
+                ...this.document.meta,
+                [storageId]:
+                    this.document.meta[storageId] ?? encryptMeta(this.key, { id }),
+            },
         };
         await this.persist(document);
         this.document = document;
@@ -225,13 +488,16 @@ export class SecretVault {
     async deleteSecret(id: string): Promise<void> {
         this.ensureOpen();
         this.validateId(id);
-        if (!Object.hasOwn(this.document.secrets, id)) {
+        const storageId = this.findStorageId(id);
+        if (!storageId) {
             throw new Error(`Secret "${id}" was not found.`);
         }
 
         const secrets = { ...this.document.secrets };
-        delete secrets[id];
-        const document: VaultDocument = { ...this.document, secrets };
+        delete secrets[storageId];
+        const meta = { ...this.document.meta };
+        delete meta[storageId];
+        const document: VaultDocument = { ...this.document, secrets, meta };
         await this.persist(document);
         this.document = document;
     }
@@ -242,10 +508,12 @@ export class SecretVault {
     ): Promise<T> {
         this.ensureOpen();
         this.validateId(id);
-        if (!Object.hasOwn(this.document.secrets, id)) {
+        const storageId = this.findStorageId(id);
+        if (!storageId) {
             throw new Error(`Secret "${id}" was not found.`);
         }
-        const encrypted = this.document.secrets[id];
+
+        const encrypted = this.document.secrets[storageId];
         if (!encrypted) {
             throw new Error(`Secret "${id}" was not found.`);
         }
@@ -261,6 +529,96 @@ export class SecretVault {
         } finally {
             secret.fill(0);
         }
+    }
+
+    async getAgentCatalog(): Promise<AgentSecretInfo[]> {
+        this.ensureOpen();
+        const catalog: AgentSecretInfo[] = [];
+        for (const { id, meta } of this.listSecretsWithMeta()) {
+            const tag = meta.tag ?? '';
+            const title = SECRET_TITLES[tag] ?? SECRET_TITLES[tag.toLowerCase()] ?? 'Stored credential';
+            catalog.push({ id, title, preview: AGENT_PREVIEW, usage: AGENT_USAGE });
+        }
+        return catalog;
+    }
+
+    async captureAndRedactPrompt(prompt: string): Promise<CapturedPrompt> {
+        this.ensureOpen();
+        const existingIds = new Map<string, string>();
+        for (const { id } of this.listSecretsWithMeta()) {
+            const value = await this.withSecret(id, (secret) => secret.toString('utf8'));
+            if (value.length > 0) existingIds.set(value, id);
+        }
+
+        const candidates: Array<{
+            start: number;
+            end: number;
+            value: string;
+            id: string | undefined;
+            type: string | undefined;
+        }> = scanText(prompt).matches
+            .filter((match) => match.type !== 'prompt_injection')
+            .filter(
+                (match): match is typeof match & { start: number; end: number } =>
+                    typeof match.start === 'number' && typeof match.end === 'number',
+            )
+            .map((match) => ({
+                start: match.start,
+                end: match.end,
+                value: match.value,
+                id: existingIds.get(match.value),
+                type: match.type,
+            }));
+
+        for (const [value, id] of existingIds) {
+            let start = prompt.indexOf(value);
+            while (start !== -1) {
+                candidates.push({ start, end: start + value.length, value, id, type: undefined });
+                start = prompt.indexOf(value, start + value.length);
+            }
+        }
+        candidates.sort((a, b) => a.start - b.start || b.end - a.end);
+
+        const replacements: Array<{ start: number; end: number; id: string }> = [];
+        const captured = new Map<string, string>();
+        const capturedIds = new Set<string>();
+        let lastEnd = 0;
+        for (const match of candidates) {
+            if (match.start < lastEnd || prompt.slice(match.start, match.end) !== match.value) {
+                continue;
+            }
+
+            let id = match.id ?? existingIds.get(match.value) ?? captured.get(match.value);
+            if (!id) {
+                id = `captured-${randomBytes(12).toString('hex')}`;
+                await this.setSecret(id, match.value);
+                await this.setSecretMeta(id, {
+                    name: SECRET_TITLES[match.type ?? ''] ?? 'Stored credential',
+                    tag: match.type ?? 'secret',
+                });
+                captured.set(match.value, id);
+            }
+            capturedIds.add(id);
+            replacements.push({ start: match.start, end: match.end, id });
+            lastEnd = match.end;
+        }
+
+        let redacted = '';
+        let cursor = 0;
+        for (const replacement of replacements) {
+            redacted +=
+                prompt.slice(cursor, replacement.start) +
+                `[PROMPT_GUARD_SECRET:${replacement.id}]`;
+            cursor = replacement.end;
+        }
+        redacted += prompt.slice(cursor);
+
+        return {
+            prompt: redacted,
+            secrets: (await this.getAgentCatalog()).filter((secret) => capturedIds.has(secret.id)),
+            manualReviewRequired: true,
+            warning: CAPTURE_WARNING,
+        };
     }
 
     close(): void {
@@ -292,6 +650,35 @@ export class SecretVault {
                 'Secret IDs must be 1-128 characters using letters, numbers, ".", "_" or "-".',
             );
         }
+        if (scanText(id).matches.some((match) => match.value === id)) {
+            throw new Error('Secret IDs must not contain a detected credential or personal value.');
+        }
+    }
+
+    private findStorageId(id: string): string | undefined {
+        for (const storageId of Object.keys(this.document.meta)) {
+            if (this.readMetadata(storageId)?.id === id) return storageId;
+        }
+        return undefined;
+    }
+
+    private readMetadata(storageId: string): VaultMetadata {
+        const encrypted = this.document.meta[storageId];
+        if (!encrypted) {
+            throw new Error('Vault metadata is missing or corrupted.');
+        }
+        const metadata = decryptMeta(this.key, encrypted);
+        if (!/^[a-zA-Z0-9._-]{1,128}$/.test(metadata.id)) {
+            throw new Error('Vault metadata is corrupted.');
+        }
+        return metadata;
+    }
+
+    private publicMeta(metadata: VaultMetadata): SecretMeta {
+        return {
+            ...(metadata.name === undefined ? {} : { name: metadata.name }),
+            ...(metadata.tag === undefined ? {} : { tag: metadata.tag }),
+        };
     }
 
     private ensureOpen(): void {

@@ -7,9 +7,7 @@ import { getDefaultVaultPath, SecretVault } from './vault';
 function readHidden(prompt: string): Promise<string> {
     const input = process.stdin;
     if (!input.isTTY || !process.stdout.isTTY || typeof input.setRawMode !== 'function') {
-        return Promise.reject(
-            new Error('Vault commands require an interactive terminal; do not pass secrets as arguments.'),
-        );
+        return Promise.resolve('');
     }
 
     return new Promise((resolve, reject) => {
@@ -54,9 +52,9 @@ function readHidden(prompt: string): Promise<string> {
 
 async function runVaultCommand(args: string[]): Promise<void> {
     const [operation, id] = args;
-    if (!['set', 'list', 'delete'].includes(operation ?? '')) {
+    if (!['set', 'list', 'delete', 'popup', 'catalog', 'capture'].includes(operation ?? '')) {
         console.error(
-            'Usage: prompt-guard vault <set <id>|list|delete <id>>\nSecret values and passphrases are entered without terminal echo.',
+            'Usage: prompt-guard vault <set <id>|list|delete <id>|catalog|capture <file>|popup>\nSecret values and passphrases are entered without terminal echo.',
         );
         process.exitCode = 1;
         return;
@@ -64,29 +62,57 @@ async function runVaultCommand(args: string[]): Promise<void> {
     if ((operation === 'set' || operation === 'delete') && !id) {
         throw new Error(`Usage: prompt-guard vault ${operation} <id>.`);
     }
-    if (args.length > (operation === 'list' ? 1 : 2)) {
+    if (operation === 'capture' && !id) {
+        throw new Error('Usage: prompt-guard vault capture <file>.');
+    }
+    if (
+        args.length > (operation === 'list' || operation === 'popup' || operation === 'catalog' ? 1 : 2)
+    ) {
         throw new Error('Too many arguments for vault command.');
     }
     if (id && !/^[a-zA-Z0-9._-]{1,128}$/.test(id)) {
-        throw new Error('Secret IDs must be 1-128 characters using letters, numbers, ".", "_" or "-".');
-    }
-
-    const vaultPath = getDefaultVaultPath();
-    if (operation !== 'set' && !fs.existsSync(vaultPath)) {
-        throw new Error('No vault exists yet; create one with "prompt-guard vault set <id>".');
-    }
-    let passphrase = await readHidden('Vault passphrase: ');
-    if (operation === 'set' && !fs.existsSync(vaultPath)) {
-        const confirmation = await readHidden('Confirm new vault passphrase: ');
-        if (passphrase !== confirmation) {
-            throw new Error('Passphrases did not match.');
+        if (operation !== 'capture') {
+            throw new Error('Secret IDs must be 1-128 characters using letters, numbers, ".", "_" or "-".');
         }
     }
 
-    const vault = await SecretVault.open({ passphrase, path: vaultPath });
+    const vaultPath = getDefaultVaultPath();
+    if (operation !== 'set' && operation !== 'popup' && !fs.existsSync(vaultPath)) {
+        throw new Error('No vault exists yet; create one with "prompt-guard vault set <id>".');
+    }
+    let passphrase: string | undefined = undefined;
+    if (operation !== 'popup') {
+        passphrase = await readHidden('Vault passphrase: ');
+        if (!passphrase) {
+            throw new Error(
+                'Vault commands require an interactive terminal for passphrase input. Use SecretVault from trusted host code for harness integration.',
+            );
+        }
+        if (operation === 'set' && !fs.existsSync(vaultPath)) {
+            const confirmation = await readHidden('Confirm new vault passphrase: ');
+            if (passphrase !== confirmation) {
+                throw new Error('Passphrases did not match.');
+            }
+        }
+    }
+
+    if (operation === 'popup') {
+        const { launchVaultPopup } = await import('./vault-popup.js');
+        await launchVaultPopup({ passphrase, path: vaultPath });
+        console.log('Vault popup closed.');
+        return;
+    }
+
+    const vault = await SecretVault.open({ passphrase: passphrase!, path: vaultPath });
     passphrase = '';
     try {
-        if (operation === 'set') {
+        if (operation === 'capture') {
+            const prompt = fs.readFileSync(id!, 'utf8');
+            const protectedPrompt = await vault.captureAndRedactPrompt(prompt);
+            console.log(JSON.stringify(protectedPrompt, null, 2));
+        } else if (operation === 'catalog') {
+            console.log(JSON.stringify(await vault.getAgentCatalog(), null, 2));
+        } else if (operation === 'set') {
             const value = await readHidden(`Secret value for "${id}": `);
             await vault.setSecret(id!, value);
             console.log(`Stored secret "${id}".`);
