@@ -20,10 +20,11 @@ type GuardedCall = (
 ) => Promise<string | null>;
 
 let callAIGuarded: GuardedCall;
+let scanModelResponse: (text: string) => ReturnType<typeof import('../src/scanner').scanText>;
 
 beforeAll(async () => {
-	vi.stubEnv('OPENAI_API_KEY', 'test-key');
-	({ callAIGuarded } = await import('../src/ai'));
+    vi.stubEnv('OPENAI_API_KEY', 'test-key');
+    ({ callAIGuarded, scanModelResponse } = await import('../src/ai'));
 });
 
 afterEach(() => {
@@ -71,13 +72,33 @@ describe('callAIGuarded', () => {
 	    });
 	    await callAIGuarded('Hello.', {
 	        baseURL: 'http://localhost:11434/v1',
-	        apiKey: 'ollama',
+	        apiKey: 'test-key',
 	    });
 	    expect(constructorCalls).toHaveLength(1);
 	    expect(constructorCalls[0][0]).toMatchObject({
 	        baseURL: 'http://localhost:11434/v1',
-	        apiKey: 'ollama',
+	        apiKey: 'test-key',
 	    });
-	});
+	    });
 
-});
+	    });
+
+	    describe('scanModelResponse', () => {
+	    it('flags a response that leaks a credential', () => {
+	        const result = scanModelResponse(
+	            'The API key is sk-proj-abcdefghijklmnopqrstuvwxyz.',
+	        );
+	        expect(result.isSafe).toBe(false);
+	        expect(
+	            result.matches.some((m: { type: string }) => m.type === 'apiKey'),
+	        ).toBe(true);
+	        // Sanitized output is available for safe display.
+	        expect(result.sanitizedText).toContain('[REDACTED_APIKEY]');
+	    });
+
+	    it('passes a clean response through unchanged', () => {
+	        const result = scanModelResponse('The weather is nice today.');
+	        expect(result.isSafe).toBe(true);
+	        expect(result.sanitizedText).toBe('The weather is nice today.');
+	    });
+	    });

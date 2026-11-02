@@ -26,7 +26,7 @@
 		"build": "tsc",
 		"test": "vitest run",
 		"dev": "vitest",
-		"pre-commit": "bash scripts/pre-commit.sh",
+		"pre-commit": "node scripts/pre-commit.js",
 		"prepublishOnly": "npm test && npm run build"
 	},
 	"keywords": [

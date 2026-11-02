@@ -531,10 +531,12 @@ export class SecretVault {
         }
     }
 
-    async getAgentCatalog(): Promise<AgentSecretInfo[]> {
+    async getAgentCatalog(filter?: { tag?: string; name?: string }): Promise<AgentSecretInfo[]> {
         this.ensureOpen();
         const catalog: AgentSecretInfo[] = [];
         for (const { id, meta } of this.listSecretsWithMeta()) {
+            if (filter?.tag && meta.tag !== filter.tag) continue;
+            if (filter?.name && meta.name !== filter.name) continue;
             const tag = meta.tag ?? '';
             const title = SECRET_TITLES[tag] ?? SECRET_TITLES[tag.toLowerCase()] ?? 'Stored credential';
             catalog.push({ id, title, preview: AGENT_PREVIEW, usage: AGENT_USAGE });
@@ -628,19 +630,47 @@ export class SecretVault {
         }
     }
 
-    private async persist(document: VaultDocument): Promise<void> {
-        const directory = dirname(this.vaultPath);
+    private async persist(document: VaultDocument, targetPath?: string): Promise<void> {
+        const writePath = targetPath ?? this.vaultPath;
+        const directory = dirname(writePath);
         await fs.mkdir(directory, { recursive: true, mode: 0o700 });
-        const temporaryPath = `${this.vaultPath}.${randomBytes(8).toString('hex')}.tmp`;
+        const temporaryPath = `${writePath}.${randomBytes(8).toString('hex')}.tmp`;
         const handle = await fs.open(temporaryPath, 'wx', 0o600);
         try {
             await handle.writeFile(`${JSON.stringify(document, null, 2)}\n`, 'utf8');
         } finally {
             await handle.close();
         }
-        await fs.rename(temporaryPath, this.vaultPath);
+        await fs.rename(temporaryPath, writePath);
         if (process.platform !== 'win32') {
-            await fs.chmod(this.vaultPath, 0o600);
+            await fs.chmod(writePath, 0o600);
+        }
+    }
+
+    /** Writes the current encrypted vault document to `exportPath` as a backup bundle. */
+    async exportTo(exportPath: string): Promise<void> {
+        this.ensureOpen();
+        await this.persist(this.document, exportPath);
+    }
+
+    /**
+     * Restores a vault from an encrypted backup bundle.
+     * Validates that `passphrase` can decrypt the bundle, then writes it to
+     * `targetPath` (default vault path). Returns the opened target vault.
+     */
+    static async importFrom(
+        importPath: string,
+        passphrase: string,
+        targetPath?: string,
+    ): Promise<SecretVault> {
+        // Fail closed: the bundle must decrypt with the supplied passphrase.
+        const source = await SecretVault.open({ passphrase, path: importPath });
+        const writePath = targetPath ?? getDefaultVaultPath();
+        try {
+            await source.exportTo(writePath);
+            return await SecretVault.open({ passphrase, path: writePath });
+        } finally {
+            source.close();
         }
     }
 

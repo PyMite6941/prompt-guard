@@ -18,5 +18,5 @@
 		"moduleDetection": "force",
 		"skipLibCheck": true
 	},
-	"files": ["src/index.ts", "src/scanner.ts", "src/patterns.ts", "src/ai.ts", "src/cli.ts", "src/vault.ts", "src/vault-popup.ts"]
+	"files": ["src/index.ts", "src/scanner.ts", "src/patterns.ts", "src/ai.ts", "src/cli.ts", "src/vault.ts", "src/vault-popup.ts", "src/hook.ts", "src/report.ts"]
 }

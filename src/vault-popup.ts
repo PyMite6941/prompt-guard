@@ -1,5 +1,6 @@
 import * as blessed from 'blessed';
-import { getDefaultVaultPath, SecretVault, SecretMeta } from './vault';
+import { existsSync } from 'node:fs';
+import { getDefaultVaultPath, SecretVault } from './vault';
 
 export interface VaultPopupOptions {
     passphrase?: string | undefined;
@@ -7,13 +8,13 @@ export interface VaultPopupOptions {
     onClose?: () => void;
 }
 
+const TAG_CHOICES = ['password', 'API', 'key', 'token', 'secret', 'other'];
+
 /**
  * Launches an interactive terminal GUI for managing vault secrets.
  *
- * - Works interactively via a blessed modal window.
- * - Falls back gracefully (rejects with a clear message) when there is no
- *   interactive terminal, so it is safe to import from any harness (CI, tests,
- *   programmatic callers) without crashing.
+ * Rejects with a clear message when there is no interactive terminal, so it
+ * is safe to import from any harness (CI, tests, programmatic callers).
  *
  * Returns a promise that resolves when the popup is closed.
  */
@@ -23,7 +24,7 @@ export async function launchVaultPopup(options: VaultPopupOptions = {}): Promise
 
     if (!input.isTTY || !output.isTTY || typeof input.setRawMode !== 'function') {
         throw new Error(
-            'Vault popup requires an interactive terminal. Use "prompt-guard vault set/list/delete" in non-interactive harnesses.',
+            'Vault popup requires an interactive terminal. Use the SecretVault API from trusted host code in non-interactive harnesses.',
         );
     }
 
@@ -35,7 +36,7 @@ export async function launchVaultPopup(options: VaultPopupOptions = {}): Promise
         if (!passphrase) {
             throw new Error('Vault passphrase is required.');
         }
-        if (!vaultExists(vaultPath)) {
+        if (!existsSync(vaultPath)) {
             const confirmation = await readHidden('Confirm new vault passphrase: ');
             if (passphrase !== confirmation) {
                 throw new Error('Passphrases did not match.');
@@ -44,34 +45,19 @@ export async function launchVaultPopup(options: VaultPopupOptions = {}): Promise
     }
 
     const vault = await SecretVault.open({ passphrase, path: vaultPath });
-    let passphraseCleared = false;
+    passphrase = '';
     try {
         await runPopup(vault, options.onClose);
     } finally {
-        if (!passphraseCleared) {
-            passphrase = '';
-            passphraseCleared = true;
-        }
         vault.close();
     }
 }
 
-function vaultExists(path: string): boolean {
-    try {
-        return require('node:fs').existsSync(path);
-    } catch {
-        return false;
-    }
-}
-
+/** Reads a line from the raw terminal without echo. Used only before blessed takes over. */
 function readHidden(label: string): Promise<string> {
     const stdin = process.stdin;
     const stdout = process.stdout;
     return new Promise((resolve) => {
-        if (!stdin.isTTY || !stdout.isTTY || typeof stdin.setRawMode !== 'function') {
-            resolve('');
-            return;
-        }
         const wasRaw = stdin.isRaw;
         let value = '';
         let finished = false;
@@ -109,7 +95,18 @@ function readHidden(label: string): Promise<string> {
     });
 }
 
-async function runPopup(vault: SecretVault, onClose?: () => void): Promise<void> {
+export function slugify(name: string): string {
+    return (
+        name
+            .toLowerCase()
+            .replace(/[^a-z0-9]+/g, '-')
+            .replace(/^-+|-+$/g, '')
+            .slice(0, 120)
+            .replace(/-+$/, '') || 'secret'
+    );
+}
+
+function runPopup(vault: SecretVault, onClose?: () => void): Promise<void> {
     const screen = blessed.screen({
         smartCSR: true,
         title: 'Prompt Guard - Vault',
@@ -118,52 +115,45 @@ async function runPopup(vault: SecretVault, onClose?: () => void): Promise<void>
         autoPadding: true,
     });
 
-    let resolveClose: (() => void) | undefined;
-    const closePopup = () => {
-        screen.removeAllListeners('key');
-        list.removeAllListeners('key');
-        main.removeAllListeners('key');
-        screen.destroy();
-        if (onClose) onClose();
-        resolveClose?.();
-    };
-
-    screen.key(['escape', 'q', 'C-c'], closePopup);
-
     const header = blessed.box({
         top: 0,
         left: 0,
         right: 0,
         height: 3,
         border: { type: 'line' },
-        content: ' {bold}Prompt Guard - Secret Vault{/bold}   {cyan-fg}Add / preview / delete encrypted secrets{/cyan-fg}',
+        content:
+            ' {bold}Prompt Guard - Secret Vault{/bold}   {cyan-fg}Add / preview / delete encrypted secrets{/cyan-fg}',
         tags: true,
         style: { bg: 'blue', fg: 'white' },
     });
 
     const list = blessed.list({
-        top: 4,
+        top: 3,
         left: 0,
-        width: 30,
-        height: '100%-6',
+        width: 32,
+        bottom: 1,
         border: { type: 'line' },
+        label: ' Secrets ',
         tags: true,
+        keys: true,
+        vi: true,
+        mouse: true,
         style: {
             fg: 'white',
             bg: 'black',
             selected: { bg: 'blue', fg: 'white' },
         },
-        items: [' {bold}Secrets{/bold}'],
     });
 
     const main = blessed.box({
-        top: 4,
-        left: 31,
+        top: 3,
+        left: 32,
         right: 0,
         bottom: 1,
         border: { type: 'line' },
         scrollable: true,
         alwaysScroll: true,
+        keys: true,
         tags: true,
     });
 
@@ -175,7 +165,7 @@ async function runPopup(vault: SecretVault, onClose?: () => void): Promise<void>
         tags: true,
         style: { fg: 'white', bg: 'black' },
         content:
-            ' {bold}Vault{/bold}   a: Add   v: Preview   d: Delete   r: Refresh   q: Quit   Tab: focus list',
+            ' {bold}Vault{/bold}   a: Add   v: Preview   d: Delete   r: Refresh   h: Help   Tab: Focus   q: Quit',
     });
 
     screen.append(header);
@@ -184,31 +174,38 @@ async function runPopup(vault: SecretVault, onClose?: () => void): Promise<void>
     screen.append(status);
 
     let secretIds: string[] = [];
-    let secretMeta: Map<string, SecretMeta> = new Map();
+    // True while a modal prompt is open, so global shortcuts do not fire underneath it.
+    let busy = false;
 
-    function refreshList(): void {
-        const listed = vault.listSecretsWithMeta();
-        secretIds = listed.map((e) => e.id);
-        secretMeta = new Map(listed.map((e) => [e.id, e.meta]));
-        const items = listed.length
-            ? listed.map((e) => {
-                  const m = e.meta;
-                  const name = m.name ? ` - ${m.name}` : '';
-                  const tag = m.tag ? ` [${m.tag}]` : '';
-                  return ` {white-fg}${e.id}{/white-fg}${name}{gray}${tag}{/gray}`;
-              })
-            : [' {gray}(no secrets stored){/gray}'];
-        list.setItems(items);
-        if (secretIds.length) list.select(0);
+    function setMain(content: string): void {
+        main.setContent(content);
+        main.setScrollPerc(0);
         screen.render();
     }
 
-    function slugify(name: string): string {
-        return name
-            .toLowerCase()
-            .replace(/[^a-z0-9]+/g, '-')
-            .replace(/^-+|-+$/g, '')
-            .slice(0, 128) || 'secret';
+    function showMessage(message: string): void {
+        setMain(`\n${blessed.escape(message)}\n`);
+    }
+
+    function selectedId(): string {
+        return secretIds[(list as unknown as { selected: number }).selected ?? 0] ?? '';
+    }
+
+    function refreshList(keepId?: string): void {
+        const previous = keepId ?? selectedId();
+        const listed = vault.listSecretsWithMeta();
+        secretIds = listed.map((entry) => entry.id);
+        const items = listed.length
+            ? listed.map(({ id, meta }) => {
+                  const name = meta.name ? ` - ${blessed.escape(meta.name)}` : '';
+                  const tag = meta.tag ? ` {gray-fg}[${blessed.escape(meta.tag)}]{/gray-fg}` : '';
+                  return ` ${blessed.escape(id)}${name}${tag}`;
+              })
+            : [' {gray-fg}(no secrets stored){/gray-fg}'];
+        list.setItems(items);
+        const index = secretIds.indexOf(previous);
+        list.select(index >= 0 ? index : 0);
+        screen.render();
     }
 
     function uniqueId(base: string): string {
@@ -220,270 +217,159 @@ async function runPopup(vault: SecretVault, onClose?: () => void): Promise<void>
         return id;
     }
 
-    function restoreKeys(): void {
-        screen.removeAllListeners('key');
-        screen.key(['escape', 'q', 'C-c'], closePopup);
-        list.key(['a'], addSecret);
-        list.key(['v'], viewSecret);
-        list.key(['d'], deleteSecret);
-        list.key(['r'], onRefresh);
-        list.key(['tab'], () => main.focus());
-        main.key(['a'], addSecret);
-        main.key(['v'], viewSecret);
-        main.key(['d'], deleteSecret);
-        main.key(['r'], onRefresh);
-        main.key(['tab'], () => list.focus());
-        screen.render();
-    }
-
-    function showMessage(message: string): void {
-        main.setContent(`
-{yellow}Message{/yellow}
-{cyan}─────────────────────────────────────────{/cyan}
-
-${message}
-
-Press any key to return.
-`);
-        status.setContent(' {bold}Message{/bold}   Press any key to return   q: Quit');
-        screen.removeAllListeners('key');
-        screen.key(['escape', 'q', 'C-c'], closePopup);
-        const once = () => {
-            restoreKeys();
-            list.focus();
-        };
-        screen.key(['any'], once);
-        screen.render();
-    }
-
-    function selectedId(): string {
-        return secretIds[(list as any).index ?? 0] ?? '';
-    }
-
-    function onRefresh(): void {
-        refreshList();
-        showMessage('List refreshed.');
-    }
-
     function showHelp(): void {
-        main.setContent(`
-{yellow}Secret Vault{/yellow}
-{cyan}─────────────────────────────────────────{/cyan}
+        setMain(`
+{yellow-fg}Secret Vault{/yellow-fg}
+{cyan-fg}─────────────────────────────────────────{/cyan-fg}
 
 Add, preview, and delete secrets stored in your encrypted vault.
 
-Actions (focus the list with Tab, then):
-  a  Add a new secret
-  v  Preview safe metadata; secret values are never displayed
-  d  Delete the selected secret
-  r  Refresh the list
-  q  Quit the vault popup
+  a    Add a new secret
+  v    Preview safe metadata (values are never displayed)
+  d    Delete the selected secret
+  r    Refresh the list
+  h    Show this help
+  Tab  Switch focus between the list and this pane
+  q    Quit the vault popup (Esc also works)
 
-Secret values are encrypted at rest with AES-256-GCM and are never shown
-on disk in plaintext.
+Secret values are encrypted at rest with AES-256-GCM and are never
+written to disk in plaintext.
 `);
-        status.setContent(' {bold}Vault Help{/bold}   Press any key to return   q: Quit');
-        screen.key(['any'], () => {
-            screen.removeAllListeners('key');
-            screen.key(['escape', 'q', 'C-c'], closePopup);
-            list.focus();
-            screen.render();
-        });
-        screen.render();
     }
 
-    showHelp();
+    /** Single-line text input; resolves undefined when cancelled with Esc. */
+    function promptText(label: string, secret = false): Promise<string | undefined> {
+        return new Promise((resolve) => {
+            const box = blessed.textbox({
+                parent: screen,
+                top: 'center',
+                left: 'center',
+                width: '60%',
+                height: 3,
+                border: { type: 'line' },
+                label: ` ${label} `,
+                censor: secret,
+                style: { fg: 'white', bg: 'black', border: { fg: 'cyan' } },
+            });
+            box.focus();
+            screen.render();
+            box.readInput((_error, value) => {
+                box.destroy();
+                screen.render();
+                resolve(typeof value === 'string' ? value : undefined);
+            });
+        });
+    }
+
+    /** Pick one option from a list; resolves undefined when cancelled with Esc. */
+    function promptSelect(label: string, options: string[]): Promise<string | undefined> {
+        return new Promise((resolve) => {
+            const picker = blessed.list({
+                parent: screen,
+                top: 'center',
+                left: 'center',
+                width: 30,
+                height: options.length + 2,
+                border: { type: 'line' },
+                label: ` ${label} `,
+                keys: true,
+                vi: true,
+                mouse: true,
+                items: options,
+                style: {
+                    fg: 'white',
+                    bg: 'black',
+                    border: { fg: 'cyan' },
+                    selected: { bg: 'blue', fg: 'white' },
+                },
+            });
+            let done = false;
+            const finish = (value: string | undefined) => {
+                if (done) return;
+                done = true;
+                picker.destroy();
+                screen.render();
+                resolve(value);
+            };
+            picker.on('select', (_item, index) => finish(options[index]));
+            picker.key(['escape'], () => finish(undefined));
+            picker.focus();
+            screen.render();
+        });
+    }
+
+    function confirmAction(text: string): Promise<boolean> {
+        return new Promise((resolve) => {
+            const question = blessed.question({
+                parent: screen,
+                top: 'center',
+                left: 'center',
+                width: '60%',
+                height: 5,
+                border: { type: 'line' },
+                tags: true,
+                style: { fg: 'white', bg: 'black', border: { fg: 'red' } },
+            });
+            question.ask(text, (_error, confirmed) => {
+                question.destroy();
+                screen.render();
+                resolve(Boolean(confirmed));
+            });
+        });
+    }
+
+    /** Runs a modal action with global shortcuts disabled, then restores focus. */
+    function modal(action: () => Promise<void>): () => void {
+        return () => {
+            if (busy) return;
+            busy = true;
+            action()
+                .catch((error: unknown) => {
+                    showMessage(error instanceof Error ? error.message : 'Vault operation failed.');
+                })
+                .finally(() => {
+                    busy = false;
+                    list.focus();
+                    screen.render();
+                });
+        };
+    }
 
     async function addSecret(): Promise<void> {
-        const name = await promptInputWithDefault(
-            'Secret name (e.g. NVIDIA NIM API): ',
-            '',
+        const name = (await promptText('Secret name (e.g. NVIDIA NIM API)'))?.trim();
+        if (!name) return;
+
+        const tag = await promptSelect('Secret tag', TAG_CHOICES);
+        if (tag === undefined) return;
+        const finalTag = tag === 'other' ? (await promptText('Custom tag'))?.trim() : tag;
+        if (!finalTag) return;
+
+        // The ID is derived from the name: visible, but not editable.
+        const id = uniqueId(slugify(name));
+        setMain(
+            `\nName: ${blessed.escape(name)}\nTag: ${blessed.escape(finalTag)}\nSecret ID (read-only): ${id}\n`,
         );
-        if (!name) {
-            restoreKeys();
-            list.focus();
-            screen.render();
-            return;
-        }
 
-        const tag = await promptSelect('Secret tag', [
-            'password',
-            'API',
-            'key',
-            'token',
-            'secret',
-            'other',
-        ]);
-        if (tag === undefined) {
-            restoreKeys();
-            list.focus();
-            screen.render();
+        const value = await promptText(`Secret value for "${name}" (hidden)`, true);
+        if (value === undefined) {
+            showMessage('Cancelled; nothing was stored.');
             return;
         }
-        const finalTag = tag === 'other' ? await promptInput('Custom tag: ') : tag;
-        if (finalTag === undefined || finalTag === '') {
-            restoreKeys();
-            list.focus();
-            screen.render();
-            return;
-        }
-
-        // Secret ID is derived from the name: visible, but not changeable.
-        const suggestedId = uniqueId(slugify(name));
-        showMessage(`Name: ${name}\nTag: ${finalTag}\nSecret ID (read-only): ${suggestedId}\n\nPress any key to enter the secret value.`);
-        const _ = await waitAnyKey();
-        if (_ === undefined) {
-            restoreKeys();
-            list.focus();
-            screen.render();
-            return;
-        }
-
-        const value = await promptHidden(`Secret value for "${name}": `);
-        if (value === undefined || value.length === 0) {
+        if (value.length === 0) {
             showMessage('Secret value cannot be empty.');
             return;
         }
+
+        await vault.setSecret(id, value);
         try {
-            await vault.setSecret(suggestedId, value);
-            await vault.setSecretMeta(suggestedId, { name, tag: finalTag });
-            refreshList();
-            showMessage(`Stored secret "${name}" (ID: ${suggestedId}).`);
-        } catch (err: any) {
-            showMessage(`Failed to store secret: ${err.message}`);
+            await vault.setSecretMeta(id, { name, tag: finalTag });
+        } catch (error) {
+            // Do not leave a half-created entry behind when the labels are rejected.
+            await vault.deleteSecret(id);
+            throw error;
         }
-    }
-
-    function waitAnyKey(): Promise<string | undefined> {
-        return new Promise((resolve) => {
-            const stdin = process.stdin;
-            const stdout = process.stdout;
-            if (!stdin.isTTY || !stdout.isTTY || typeof stdin.setRawMode !== 'function') {
-                resolve(undefined);
-                return;
-            }
-            const wasRaw = stdin.isRaw;
-            let finished = false;
-            const finish = (result: string | undefined) => {
-                if (finished) return;
-                finished = true;
-                stdin.removeListener('data', onData);
-                stdin.pause();
-                stdin.setRawMode(wasRaw);
-                stdout.write('\n');
-                resolve(result);
-            };
-            const onData = (chunk: Buffer | string) => {
-                for (const character of chunk.toString()) {
-                    if (character === '\u0003') {
-                        finish(undefined);
-                        return;
-                    }
-                    if (character === '\r' || character === '\n') {
-                        finish('');
-                        return;
-                    }
-                    finish(character);
-                    return;
-                }
-            };
-            stdout.write('');
-            stdin.setEncoding('utf8');
-            stdin.setRawMode(true);
-            stdin.resume();
-            stdin.on('data', onData);
-        });
-    }
-
-    function promptSelect(label: string, options: string[]): Promise<string | undefined> {
-        return new Promise((resolve) => {
-            const stdin = process.stdin;
-            const stdout = process.stdout;
-            if (!stdin.isTTY || !stdout.isTTY || typeof stdin.setRawMode !== 'function') {
-                resolve(undefined);
-                return;
-            }
-            const lines = options.map((o, i) => `  [${i + 1}] ${o}`).join('\n');
-            stdout.write(`${label}\n${lines}\nSelect 1-${options.length}: `);
-            const wasRaw = stdin.isRaw;
-            let finished = false;
-            const finish = (result: string | undefined) => {
-                if (finished) return;
-                finished = true;
-                stdin.removeListener('data', onData);
-                stdin.pause();
-                stdin.setRawMode(wasRaw);
-                stdout.write('\n');
-                resolve(result);
-            };
-            const onData = (chunk: Buffer | string) => {
-                for (const character of chunk.toString()) {
-                    if (character === '\u0003') {
-                        finish(undefined);
-                        return;
-                    }
-                    if (character === '\r' || character === '\n') {
-                        finish(undefined);
-                        return;
-                    }
-                    const n = Number(character.trim());
-                    if (Number.isInteger(n) && n >= 1 && n <= options.length) {
-                        finish(options[n - 1]);
-                        return;
-                    }
-                }
-            };
-            stdin.setEncoding('utf8');
-            stdin.setRawMode(true);
-            stdin.resume();
-            stdin.on('data', onData);
-        });
-    }
-
-    function promptInputWithDefault(label: string, defaultValue: string): Promise<string> {
-        return new Promise((resolve) => {
-            const stdin = process.stdin;
-            const stdout = process.stdout;
-            if (!stdin.isTTY || !stdout.isTTY || typeof stdin.setRawMode !== 'function') {
-                resolve('');
-                return;
-            }
-            const wasRaw = stdin.isRaw;
-            let value = defaultValue;
-            let finished = false;
-            // Render the default as editable text: show default, allow backspace to clear, then type.
-            stdout.write(`${label} [${defaultValue}]: `);
-            const finish = (result: string) => {
-                if (finished) return;
-                finished = true;
-                stdin.removeListener('data', onData);
-                stdin.pause();
-                stdin.setRawMode(wasRaw);
-                stdout.write('\n');
-                resolve(result);
-            };
-            const onData = (chunk: Buffer | string) => {
-                for (const character of chunk.toString()) {
-                    if (character === '\u0003') {
-                        finish('');
-                        return;
-                    }
-                    if (character === '\r' || character === '\n') {
-                        finish(value);
-                        return;
-                    }
-                    if (character === '\u007f' || character === '\b') {
-                        value = Array.from(value).slice(0, -1).join('');
-                    } else if (character >= ' ') {
-                        value += character;
-                    }
-                }
-            };
-            stdin.setEncoding('utf8');
-            stdin.setRawMode(true);
-            stdin.resume();
-            stdin.on('data', onData);
-        });
+        refreshList(id);
+        showMessage(`Stored secret "${name}" (ID: ${id}).`);
     }
 
     async function viewSecret(): Promise<void> {
@@ -492,18 +378,24 @@ on disk in plaintext.
             showMessage('No secret selected.');
             return;
         }
-        try {
-            const info = (await vault.getAgentCatalog()).find((secret) => secret.id === id);
-            if (!info) {
-                showMessage('This secret is not safe to show in the agent catalog. Change its ID.');
-                return;
-            }
-            showMessage(
-                `Title: ${info.title}\nID: ${info.id}\nPreview: ${info.preview}\nHow to use: ${info.usage}`,
-            );
-        } catch (err: any) {
-            showMessage(`Could not read secret: ${err.message}`);
+        const info = (await vault.getAgentCatalog()).find((secret) => secret.id === id);
+        if (!info) {
+            showMessage(`Secret "${id}" was not found.`);
+            return;
         }
+        const meta = vault.getSecretMeta(id) ?? {};
+        showMessage(
+            [
+                `ID: ${info.id}`,
+                `Name: ${meta.name ?? '(none)'}`,
+                `Tag: ${meta.tag ?? '(none)'}`,
+                '',
+                'Agent catalog view:',
+                `  Title: ${info.title}`,
+                `  Preview: ${info.preview}`,
+                `  Usage: ${info.usage}`,
+            ].join('\n'),
+        );
     }
 
     async function deleteSecret(): Promise<void> {
@@ -512,172 +404,48 @@ on disk in plaintext.
             showMessage('No secret selected.');
             return;
         }
-        const confirmed = await confirmAction(`Delete secret "${id}"? (y/n): `);
-        if (!confirmed) return;
-        try {
-            await vault.deleteSecret(id);
-            refreshList();
-            showMessage(`Deleted secret "${id}".`);
-        } catch (err: any) {
-            showMessage(`Failed to delete secret: ${err.message}`);
+        if (!(await confirmAction(`Delete secret "${id}"? (y/n)`))) {
+            showMessage('Delete cancelled.');
+            return;
         }
+        await vault.deleteSecret(id);
+        refreshList();
+        showMessage(`Deleted secret "${id}".`);
     }
 
-    list.on('select', () => {
-        refreshList();
-    });
-
-    list.key(['a'], addSecret);
-    list.key(['v'], viewSecret);
-    list.key(['d'], deleteSecret);
-    list.key(['r'], () => {
-        refreshList();
-        showMessage('List refreshed.');
-    });
-    list.key(['tab'], () => {
-        main.focus();
-    });
-
-    main.key(['a'], addSecret);
-    main.key(['v'], viewSecret);
-    main.key(['d'], deleteSecret);
-    main.key(['r'], () => {
-        refreshList();
-        showMessage('List refreshed.');
-    });
-    main.key(['tab'], () => {
-        list.focus();
-    });
-
-    refreshList();
-    list.focus();
-    screen.render();
-
     return new Promise<void>((resolve) => {
-        resolveClose = resolve;
-    });
-}
+        let closed = false;
+        const closePopup = () => {
+            if (busy || closed) return;
+            closed = true;
+            screen.destroy();
+            // blessed leaves stdin flowing, which would keep the process alive.
+            process.stdin.pause();
+            onClose?.();
+            resolve();
+        };
 
-function promptInput(label: string): Promise<string> {
-    return new Promise((resolve) => {
-        const inputBox = blessed.textbox({
-            top: 'center',
-            left: 'center',
-            width: 50,
-            height: 3,
-            border: { type: 'line' },
-            label: ` ${label} `,
-            inputOnFocus: true,
-            style: { fg: 'white', bg: 'black', border: { fg: 'cyan' } },
+        screen.key(['escape', 'q', 'C-c'], closePopup);
+        screen.key(['a'], modal(addSecret));
+        screen.key(['v'], modal(viewSecret));
+        screen.key(['d'], modal(deleteSecret));
+        screen.key(['h', '?'], () => {
+            if (!busy) showHelp();
         });
-
-        const screen = inputBox.screen as blessed.Widgets.Screen;
-        inputBox.key(['enter'], () => {
-            const value = inputBox.getValue().trim();
-            inputBox.destroy();
+        screen.key(['r'], () => {
+            if (busy) return;
+            refreshList();
+            showMessage('List refreshed.');
+        });
+        screen.key(['tab'], () => {
+            if (busy) return;
+            (screen.focused === list ? main : list).focus();
             screen.render();
-            resolve(value);
-        });
-        inputBox.key(['escape'], () => {
-            inputBox.destroy();
-            screen.render();
-            resolve('');
         });
 
-        screen.append(inputBox);
-        inputBox.focus();
+        refreshList();
+        showHelp();
+        list.focus();
         screen.render();
-    });
-}
-
-function promptHidden(label: string): Promise<string | undefined> {
-    return new Promise((resolve) => {
-        const stdin = process.stdin;
-        const stdout = process.stdout;
-        if (!stdin.isTTY || !stdout.isTTY || typeof stdin.setRawMode !== 'function') {
-            resolve(undefined);
-            return;
-        }
-        const wasRaw = stdin.isRaw;
-        let value = '';
-        let finished = false;
-        const finish = (result: string | undefined) => {
-            if (finished) return;
-            finished = true;
-            stdin.removeListener('data', onData);
-            stdin.pause();
-            stdin.setRawMode(wasRaw);
-            stdout.write('\n');
-            resolve(result);
-        };
-        const onData = (chunk: Buffer | string) => {
-            for (const character of chunk.toString()) {
-                if (character === '\u0003') {
-                    finish(undefined);
-                    return;
-                }
-                if (character === '\r' || character === '\n') {
-                    finish(value);
-                    return;
-                }
-                if (character === '\u007f' || character === '\b') {
-                    value = Array.from(value).slice(0, -1).join('');
-                } else if (character >= ' ') {
-                    value += character;
-                }
-            }
-        };
-        stdout.write(label);
-        stdin.setEncoding('utf8');
-        stdin.setRawMode(true);
-        stdin.resume();
-        stdin.on('data', onData);
-    });
-}
-
-function confirmAction(label: string): Promise<boolean> {
-    return new Promise((resolve) => {
-        const stdin = process.stdin;
-        const stdout = process.stdout;
-        if (!stdin.isTTY || !stdout.isTTY || typeof stdin.setRawMode !== 'function') {
-            resolve(false);
-            return;
-        }
-        const wasRaw = stdin.isRaw;
-        let finished = false;
-        const finish = (result: boolean) => {
-            if (finished) return;
-            finished = true;
-            stdin.removeListener('data', onData);
-            stdin.pause();
-            stdin.setRawMode(wasRaw);
-            stdout.write('\n');
-            resolve(result);
-        };
-        const onData = (chunk: Buffer | string) => {
-            for (const character of chunk.toString()) {
-                if (character === '\u0003') {
-                    finish(false);
-                    return;
-                }
-                if (character === '\r' || character === '\n') {
-                    finish(false);
-                    return;
-                }
-                if (character === 'y' || character === 'Y') {
-                    finish(true);
-                    return;
-                }
-                if (character === 'n' || character === 'N') {
-                    finish(false);
-                    return;
-                }
-            }
-        };
-        stdout.write(label);
-        stdin.setEncoding('utf8');
-        stdin.setRawMode(true);
-        stdin.resume();
-        stdin.on('data', onData);
     });
 }

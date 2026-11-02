@@ -205,3 +205,81 @@ describe('SecretVault', () => {
         ).rejects.toThrow('at least 12 characters');
     });
 });
+
+describe('vault popup helpers', () => {
+    it('derives valid read-only secret IDs from names', async () => {
+        const { slugify } = await import('../src/vault-popup');
+        expect(slugify('NVIDIA NIM API')).toBe('nvidia-nim-api');
+        expect(slugify('***')).toBe('secret');
+        expect(slugify('a'.repeat(200))).toMatch(/^[a-z0-9-]{1,120}$/);
+    });
+});
+
+describe('vault export/import', () => {
+    it('exports an encrypted backup bundle and restores it', async () => {
+        const directory = await mkdtemp(join(tmpdir(), 'prompt-guard-export-'));
+        directories.push(directory);
+        const vaultPath = join(directory, 'vault.json');
+        const exportPath = join(directory, 'backup.json');
+
+        const vault = await SecretVault.open({ path: vaultPath, passphrase: PASSPHRASE });
+        await vault.setSecret('deploy-token', 'super-secret-value');
+        await vault.setSecretMeta('deploy-token', { name: 'Deploy', tag: 'token' });
+        vaults.push(vault);
+
+        await vault.exportTo(exportPath);
+        const exported = await readFile(exportPath, 'utf8');
+        expect(JSON.parse(exported).version).toBe(2);
+        expect(exported).not.toContain('super-secret-value');
+
+        // Restore into a different file with the same passphrase.
+        const restorePath = join(directory, 'restored.json');
+        const restored = await SecretVault.importFrom(exportPath, PASSPHRASE, restorePath);
+        vaults.push(restored);
+
+        expect(restored.listSecrets()).toEqual(['deploy-token']);
+        expect(await restored.withSecret('deploy-token', (s) => s.toString('utf8'))).toBe(
+            'super-secret-value',
+        );
+        const meta = restored.getSecretMeta('deploy-token');
+        expect(meta?.name).toBe('Deploy');
+        expect(meta?.tag).toBe('token');
+    });
+
+    it('rejects import with a wrong passphrase', async () => {
+        const directory = await mkdtemp(join(tmpdir(), 'prompt-guard-import-bad-'));
+        directories.push(directory);
+        const vaultPath = join(directory, 'vault.json');
+        const exportPath = join(directory, 'backup.json');
+
+        const vault = await SecretVault.open({ path: vaultPath, passphrase: PASSPHRASE });
+        await vault.setSecret('x', 'y');
+        vaults.push(vault);
+        await vault.exportTo(exportPath);
+        vault.close();
+
+        const restorePath = join(directory, 'restored.json');
+        await expect(
+            SecretVault.importFrom(exportPath, 'wrong-passphrase', restorePath),
+        ).rejects.toThrow('Incorrect vault passphrase');
+    });
+});
+
+describe('vault catalog filtering', () => {
+    it('filters agent catalog by tag and name', async () => {
+        const { path, vault } = await createVault();
+        await vault.setSecret('aws-key', 'ak-value');
+        await vault.setSecretMeta('aws-key', { name: 'AWS', tag: 'token' });
+        await vault.setSecret('db-pass', 'db-value');
+        await vault.setSecretMeta('db-pass', { name: 'DB', tag: 'password' });
+
+        const byTag = await vault.getAgentCatalog({ tag: 'token' });
+        expect(byTag.map((s) => s.id)).toEqual(['aws-key']);
+
+        const byName = await vault.getAgentCatalog({ name: 'DB' });
+        expect(byName.map((s) => s.id)).toEqual(['db-pass']);
+
+        const none = await vault.getAgentCatalog({ tag: 'nonexistent' });
+        expect(none).toEqual([]);
+    });
+});

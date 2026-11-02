@@ -85,3 +85,15 @@ export async function callAIGuarded(
 
     return response.choices[0]?.message.content ?? null;
 }
+
+/**
+ * Outbound guard: scans a model's response text for leaked secrets or PII
+ * before it is returned to the user. Returns the scan result; callers should
+ * block or redact the response when matches are found. Detected values are
+ * available in result.matches but must never be echoed back to the user.
+ */
+export function scanModelResponse(
+    responseText: string,
+): ReturnType<typeof scanText> {
+    return scanText(responseText);
+}

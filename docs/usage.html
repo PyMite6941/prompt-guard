@@ -49,8 +49,12 @@ prompt-guard examples/leak.txt --ignore=email,creditCard</code></pre>
         <thead><tr><th>Flag</th><th>Description</th></tr></thead>
         <tbody>
           <tr><td><code>--ignore=cat1,cat2</code></td><td>Skip comma-separated categories</td></tr>
+          <tr><td><code>--exclude=path1,path2</code></td><td>Exclude paths relative to a scanned directory</td></tr>
           <tr><td><code>--json</code></td><td>Output machine-readable JSON results</td></tr>
           <tr><td><code>--sarif</code></td><td>Output SARIF 2.1.0 log for code-scanning tools</td></tr>
+          <tr><td><code>--html[=file]</code></td><td>Write an HTML report; detected values are withheld</td></tr>
+          <tr><td><code>--junit[=file]</code></td><td>Write a JUnit XML report; detected values are withheld</td></tr>
+          <tr><td><code>--audit-log[=file]</code></td><td>Append JSON-lines metadata without detected values</td></tr>
           <tr><td><code>--partial-redaction</code></td><td>Show last 4 characters instead of full redaction</td></tr>
           <tr><td><code>--config=path</code></td><td>Load configuration from a .promptguardrc file</td></tr>
           <tr><td><code>--tui</code> / <code>-t</code></td><td>Launch the terminal user interface</td></tr>
@@ -64,9 +68,12 @@ prompt-guard examples/leak.txt --ignore=email,creditCard</code></pre>
 prompt-guard vault list
 prompt-guard vault catalog
 prompt-guard vault capture prompt.txt
+prompt-guard vault export vault-backup.json
+prompt-guard vault import vault-backup.json
 prompt-guard vault popup
 prompt-guard vault delete deployment-token</code></pre>
-      <p><code>vault popup</code> opens the interactive terminal GUI. Add secrets, edit labels, remove entries, and inspect a safe metadata preview; it never displays a decrypted value. <code>vault catalog</code> returns only IDs, generic titles, a fixed redacted preview, and safe-use guidance.</p>
+      <p><code>vault export</code> writes an encrypted backup. <code>vault import</code> verifies it with the vault passphrase and replaces the default vault; back up existing data first. Import paths may be outside the current directory; export paths are restricted to the current directory.</p>
+      <p><code>vault popup</code> opens the interactive terminal GUI. Add secrets with a name and tag, delete entries, and inspect a safe metadata preview; it never displays a decrypted value. <code>vault catalog</code> returns only IDs, generic titles, a fixed redacted preview, and safe-use guidance.</p>
       <p>Capture and redact locally, then require a human to review and explicitly approve the prompt before any model request. Detection is best-effort; the capture result always sets <code>manualReviewRequired: true</code>, since unknown sensitive values can remain:</p>
       <pre><code>const protectedPrompt = await vault.captureAndRedactPrompt(incomingPrompt);
 const approvedPrompt = await reviewPromptLocally(protectedPrompt);
@@ -88,6 +95,21 @@ const answer = await callAIGuarded(approvedPrompt, { autoSanitize: true });</cod
       }</code></pre>
       <p class="warning">Never expose a generic “get secret” tool to the model. Bind fixed IDs in host policy, pass values only to allow-listed local operations, and keep them out of prompts, tool results, logs, and telemetry. A model-controlled shell with the same OS account can bypass application-level restrictions; use harness tool allowlists and process isolation. Detection is pattern-based and cannot identify every possible secret.</p>
       <p>The vault uses scrypt and AES-256-GCM and stores data in the per-user application data directory. The callback receives a temporary buffer that is zeroed afterward; do not retain or copy it. Use a unique passphrase of at least 12 characters; there is no password recovery or network sync. CLI commands require a terminal and do not accept passphrases through environment variables. Set <code>PROMPT_GUARD_VAULT_PATH</code> to use a custom path.</p>
+
+      <h2 id="hook">Claude Code hook</h2>
+      <p><code>prompt-guard hook</code> reads a Claude Code hook event from stdin. If <code>UserPromptSubmit</code> finds a secret, it blocks the prompt. If <code>PreToolUse</code> finds one, it denies the tool call (or asks first, with <code>--tool-decision=ask</code>). Reasons name only the detection type and severity, never the value. Malformed input exits with code 2 so the hook fails closed.</p>
+      <pre><code>{
+  "hooks": {
+    "UserPromptSubmit": [
+      { "hooks": [{ "type": "command", "command": "prompt-guard hook", "timeout": 10 }] }
+    ],
+    "PreToolUse": [
+      { "matcher": "Bash|Write|Edit|WebFetch",
+        "hooks": [{ "type": "command", "command": "prompt-guard hook --tool-decision=ask", "timeout": 10 }] }
+    ]
+  }
+}</code></pre>
+      <p>Flags: <code>--min-severity</code> (default <code>medium</code>), <code>--ignore</code>, <code>--config</code>, <code>--tool-decision=deny|ask</code>. Hooks cannot rewrite prompts; keep secrets in the vault and refer to them by ID.</p>
 
       <h2>Scan TypeScript text</h2>
       <pre><code>import { scanText } from '@ai-clyde/promptguard';

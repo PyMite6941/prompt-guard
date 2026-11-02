@@ -11,7 +11,8 @@ export const PII_PATTERNS: Record<string, Piipattern> = {
 		severity: 'medium',
 	},
 	socialHandle: {
-		pattern: /(?<![\w@])@[A-Za-z0-9_]{1,30}(?!\.)/g,
+		// The lookahead also rejects "/" and "-" so npm scopes like @types/node are not handles.
+		pattern: /(?<![\w@])@[A-Za-z0-9_]{1,30}(?![\w./-])/g,
 		severity: 'low',
 	},
 	creditCard: {
@@ -35,7 +36,8 @@ export const PII_PATTERNS: Record<string, Piipattern> = {
 		severity: 'critical',
 	},
 	jwtToken: {
-		pattern: /\b[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/g,
+		// JWT headers are base64url-encoded JSON, so they always start with "eyJ" ('{"').
+		pattern: /\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/g,
 		severity: 'high',
 	},
 	stripeKey: {
@@ -58,10 +60,48 @@ export const PII_PATTERNS: Record<string, Piipattern> = {
 		pattern: /\b\d{3}-\d{2}-\d{4}\b/g,
 		severity: 'high',
 	},
+	pgpPrivateKey: {
+		pattern: /-----BEGIN PGP PRIVATE KEY BLOCK-----/g,
+		severity: 'critical',
+	},
+	ecPrivateKey: {
+		pattern: /-----BEGIN EC PRIVATE KEY-----/g,
+		severity: 'critical',
+	},
+	pkcs8PrivateKey: {
+		pattern: /-----BEGIN PRIVATE KEY-----/g,
+		severity: 'critical',
+	},
+	azureConnectionString: {
+		pattern: /DefaultEndpointsProtocol=https;[^;\s]+;AccountKey=[^;\s]+/g,
+		severity: 'critical',
+	},
+	sendgridKey: {
+		pattern: /\bSG\.[A-Za-z0-9_-]{22,}\.[A-Za-z0-9_-]{22,}\b/g,
+		severity: 'critical',
+	},
+	gcpServiceAccount: {
+		pattern: /"type"\s*:\s*"service_account"/g,
+		severity: 'critical',
+	},
+	ethereumAddress: {
+		pattern: /\b0x[a-fA-F0-9]{40}\b/g,
+		severity: 'low',
+	},
+	bitcoinAddress: {
+		pattern: /\b[13][a-km-zA-HJ-NP-Z1-9]{25,34}\b/g,
+		severity: 'low',
+	},
+	iban: {
+		pattern: /\b[A-Z]{2}[0-9]{2}[A-Z0-9]{4}[0-9]{7}(?:[A-Z0-9]?){0,16}\b/g,
+		severity: 'medium',
+	},
 };
 
 export const INJECTION_PATTERNS: Array<{ pattern: RegExp; severity: Severity }> = [
 	{ pattern: /ignore previous instructions/i, severity: 'critical' },
+	{ pattern: /disregard previous instructions/i, severity: 'critical' },
 	{ pattern: /system prompt/i, severity: 'high' },
 	{ pattern: /you are now unbound/i, severity: 'high' },
+	{ pattern: /you are now (in developer mode|DAN|do anything now)/i, severity: 'high' },
 ];

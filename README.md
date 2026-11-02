@@ -12,6 +12,7 @@ Prompt Guard is a lightweight TypeScript scanner that flags personally identifia
 - [Requirements](#requirements)
 - [Quick start](#quick-start)
 - [CLI usage](#cli-usage)
+- [Claude Code hook](#claude-code-hook)
 - [Programmatic usage](#programmatic-usage)
 - [Local secret vault](#local-secret-vault)
 - [Guarded AI calls (`callAIGuarded`)](#guarded-ai-calls-callaguarded)
@@ -162,8 +163,16 @@ prompt-guard vault list                        # print IDs only
 prompt-guard vault delete deployment-token
 prompt-guard vault catalog                     # safe agent-visible metadata only
 prompt-guard vault capture prompt.txt          # store detections and print redacted prompt
+prompt-guard vault export vault-backup.json    # encrypted backup
+prompt-guard vault import vault-backup.json    # restore backup
 prompt-guard vault popup                       # interactive terminal GUI
 ```
+
+`vault export` writes an encrypted backup. `vault import` verifies the backup
+with the vault passphrase and replaces the default vault; back up the current
+vault first if you need to keep it. Import paths may refer to files outside the
+current directory, while export paths are restricted to the current directory
+to prevent accidental path traversal.
 
 ### Interactive popup GUI (`vault popup`)
 
@@ -177,7 +186,8 @@ without typing commands:
 - **Value** — hidden input, encrypted at rest with AES-256-GCM
 
 Keys: `a` add, `v` show a safe metadata preview, `d` delete (confirm), `r`
-refresh, `q`/Esc quit, `Tab` switches focus. The popup never reveals secret
+refresh, `h` help, `q`/Esc quit, `Tab` switches focus. Esc inside a prompt
+cancels that prompt without storing anything. The popup never reveals secret
 values. It requires an interactive terminal.
 
 ### Capture and redact prompts locally
@@ -282,6 +292,53 @@ Vault files use scrypt-derived keys and AES-256-GCM authenticated encryption.
 Use a unique, strong passphrase and keep a recoverable copy outside the vault;
 losing it means the encrypted secrets cannot be recovered. The vault is local
 to the current machine and does not sync or call a network service.
+
+## Claude Code hook
+
+`prompt-guard hook` plugs into Claude Code (and other harnesses that use the
+same hook protocol). Claude Code sends each event as JSON on stdin and
+reads a decision back on stdout:
+
+| Event | What is scanned | On a finding |
+|---|---|---|
+| `UserPromptSubmit` | the prompt text | `{"decision":"block"}`: the prompt never reaches the model |
+| `PreToolUse` | every string in `tool_input` (commands, file contents, URLs) | `permissionDecision: "deny"` (or `"ask"`) |
+| anything else | nothing | allowed |
+
+Reasons list only the detection type and severity, such as `githubToken (critical)`,
+and never the matched value. Malformed input or an invalid flag exits with code
+2, which Claude Code treats as a block, so a broken hook does not silently
+allow everything.
+
+Install the CLI globally (`npm i -g @ai-clyde/promptguard`), then add this to
+`.claude/settings.json` (project) or `~/.claude/settings.json` (all projects):
+
+```json
+{
+  "hooks": {
+    "UserPromptSubmit": [
+      { "hooks": [{ "type": "command", "command": "prompt-guard hook", "timeout": 10 }] }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash|Write|Edit|WebFetch",
+        "hooks": [{ "type": "command", "command": "prompt-guard hook --tool-decision=ask", "timeout": 10 }]
+      }
+    ]
+  }
+}
+```
+
+Flags: `--min-severity=low|medium|high|critical` (default `medium`, so
+low-severity social handles and IP addresses pass), `--ignore=email,ssn`,
+`--config=path`, and `--tool-decision=deny|ask` (default `deny`). Use `ask` in
+repositories whose test fixtures intentionally contain fake credentials, so
+you can approve those edits. Hooks cannot rewrite a prompt. To keep a value
+out of the conversation, store it with `prompt-guard vault` and refer to its
+secret ID.
+
+The same logic is available as `evaluateHookInput(rawJson, options)` from
+the package API.
 
 ## Programmatic usage
 Import \`scanText\` and \`callAIGuarded\` from the package:
@@ -502,8 +559,9 @@ prompt-guard examples/leak.txt --sarif > results.sarif
 
 The SARIF output includes:
 - Rule definitions for each detection type with severity levels
-- Result locations with file URIs
-- Messages describing each match
+- Result locations with file URIs and the line/column of each match
+- Messages naming the detection type and severity; matched values are never
+  copied into the report, so it is safe to upload to code-scanning services
 
 ---
 
@@ -569,21 +627,21 @@ Commit and push all intended release changes, then push a tag matching the versi
 
 ```sh
 git add <intended-release-files>
-git commit -m "chore: release v1.0.2"
+git commit -m "chore: release v1.0.3"
 git push origin master
-git tag v1.0.2
-git push origin v1.0.2
+git tag v1.0.3
+git push origin v1.0.3
 ```
 
-The repository already has a `v1.0.1` tag, so do not reuse or move it. The next prepared version is `1.0.2`. Pushing its matching tag triggers the workflow; publishing fails before upload if the tag, package version, or npm credentials do not match.
+Version `1.0.2` is already published to npm, so do not reuse its version number. The next prepared version is `1.0.3`. Pushing its matching tag triggers the workflow; publishing fails before upload if the tag, package version, or npm credentials do not match.
 
 ---
 
 ## Pre-commit hook
 
-A committed hook script scans staged text files on every commit and blocks the commit if anything is unsafe.
+A committed hook script scans staged text files on every commit and blocks the commit if anything is unsafe. It needs a built CLI (`npm run build`).
 
-`scripts/pre-commit.sh` is in the repository. Git hooks cannot be tracked directly, so install it once per clone:
+`scripts/pre-commit.sh` is a cross-platform wrapper around the Node hook. Git hooks cannot be tracked directly, so install it once per clone:
 
 ```sh
 cp scripts/pre-commit.sh .git/hooks/pre-commit
@@ -596,7 +654,10 @@ Or run it manually anytime:
 npm run pre-commit
 ```
 
-Scanned extensions: `.md`, `.txt`, `.ts`, `.js`, `.json`, `.html`, `.yaml`, `.yml`, `.env.example`. Non-text files are skipped automatically.
+Scanned extensions: `.md`, `.txt`, `.ts`, `.js`, `.json`, `.html`, `.yaml`, `.yml`, `.env`, `.env.*`. Non-text files are skipped automatically.
+Use `--exclude=path,...` when scanning a directory to exclude comma-separated paths relative to the scan root.
+
+Paths that intentionally contain sample PII or credentials are skipped: `examples/`, `tests/`, `docs/`, `README.md`, and `src/patterns.ts`, plus the generated `package-lock.json` (its integrity hashes resemble AWS secret keys). Low-severity social handles are ignored because JSDoc tags such as `@param` look like handles.
 
 ---
 

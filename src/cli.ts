@@ -1,8 +1,14 @@
 #!/usr/bin/env node
-import { scanText, generateSarif, ScanResult } from './scanner';
+import { scanText, generateSarif, ScanResult, Severity, TOOL_VERSION } from './scanner';
 import * as fs from 'fs';
 import * as path from 'path';
 import { getDefaultVaultPath, SecretVault } from './vault';
+import {
+	generateHtmlReport,
+	generateJunitXml,
+	appendAuditLog,
+	type ReportFile,
+} from './report';
 
 function readHidden(prompt: string): Promise<string> {
     const input = process.stdin;
@@ -52,9 +58,20 @@ function readHidden(prompt: string): Promise<string> {
 
 async function runVaultCommand(args: string[]): Promise<void> {
     const [operation, id] = args;
-    if (!['set', 'list', 'delete', 'popup', 'catalog', 'capture'].includes(operation ?? '')) {
+    if (
+        ![
+            'set',
+            'list',
+            'delete',
+            'popup',
+            'catalog',
+            'capture',
+            'export',
+            'import',
+        ].includes(operation ?? '')
+    ) {
         console.error(
-            'Usage: prompt-guard vault <set <id>|list|delete <id>|catalog|capture <file>|popup>\nSecret values and passphrases are entered without terminal echo.',
+            'Usage: prompt-guard vault <set <id>|list|delete <id>|catalog|capture <file>|export <file>|import <file>|popup>\nSecret values and passphrases are entered without terminal echo.',
         );
         process.exitCode = 1;
         return;
@@ -65,19 +82,27 @@ async function runVaultCommand(args: string[]): Promise<void> {
     if (operation === 'capture' && !id) {
         throw new Error('Usage: prompt-guard vault capture <file>.');
     }
+    if ((operation === 'export' || operation === 'import') && !id) {
+        throw new Error(`Usage: prompt-guard vault ${operation} <file>.`);
+    }
     if (
         args.length > (operation === 'list' || operation === 'popup' || operation === 'catalog' ? 1 : 2)
     ) {
         throw new Error('Too many arguments for vault command.');
     }
     if (id && !/^[a-zA-Z0-9._-]{1,128}$/.test(id)) {
-        if (operation !== 'capture') {
+        if (operation !== 'capture' && operation !== 'export' && operation !== 'import') {
             throw new Error('Secret IDs must be 1-128 characters using letters, numbers, ".", "_" or "-".');
         }
     }
 
     const vaultPath = getDefaultVaultPath();
-    if (operation !== 'set' && operation !== 'popup' && !fs.existsSync(vaultPath)) {
+    if (
+        operation !== 'set' &&
+        operation !== 'popup' &&
+        operation !== 'import' &&
+        !fs.existsSync(vaultPath)
+    ) {
         throw new Error('No vault exists yet; create one with "prompt-guard vault set <id>".');
     }
     let passphrase: string | undefined = undefined;
@@ -103,6 +128,13 @@ async function runVaultCommand(args: string[]): Promise<void> {
         return;
     }
 
+    if (operation === 'import') {
+        const importedVault = await SecretVault.importFrom(id!, passphrase!, vaultPath);
+        importedVault.close();
+        console.log('Imported vault from ' + id!);
+        return;
+    }
+
     const vault = await SecretVault.open({ passphrase: passphrase!, path: vaultPath });
     passphrase = '';
     try {
@@ -119,6 +151,10 @@ async function runVaultCommand(args: string[]): Promise<void> {
         } else if (operation === 'list') {
             const ids = vault.listSecrets();
             console.log(ids.length ? ids.join('\n') : '(no secrets stored)');
+        } else if (operation === 'export') {
+            validateOutputPath(id!);
+            await vault.exportTo(id!);
+            console.log('Exported vault to ' + id!);
         } else {
             await vault.deleteSecret(id!);
             console.log(`Deleted secret "${id}".`);
@@ -128,12 +164,160 @@ async function runVaultCommand(args: string[]): Promise<void> {
     }
 }
 
+async function readStdin(): Promise<string> {
+    const chunks: Buffer[] = [];
+    for await (const chunk of process.stdin) {
+        chunks.push(typeof chunk === 'string' ? Buffer.from(chunk) : chunk);
+    }
+    return Buffer.concat(chunks).toString('utf8');
+}
+
+const SEVERITIES: Severity[] = ['low', 'medium', 'high', 'critical'];
+
+async function runHookCommand(args: string[]): Promise<void> {
+    const value = (name: string) =>
+        args.find((arg) => arg.startsWith(`--${name}=`))?.slice(name.length + 3);
+    const minSeverity = value('min-severity');
+    const toolDecision = value('tool-decision');
+    const unknown = args.filter(
+        (arg) => !/^--(ignore|min-severity|config|tool-decision)=/.test(arg),
+    );
+    if (
+        unknown.length > 0 ||
+        (minSeverity !== undefined && !SEVERITIES.includes(minSeverity as Severity)) ||
+        (toolDecision !== undefined && toolDecision !== 'deny' && toolDecision !== 'ask')
+    ) {
+        // Exit 2 so a misconfigured hook blocks instead of silently allowing everything.
+        process.stderr.write(
+            'Usage: prompt-guard hook [--ignore=a,b] [--min-severity=low|medium|high|critical] [--config=path] [--tool-decision=deny|ask]\n',
+        );
+        process.exitCode = 2;
+        return;
+    }
+
+    const { evaluateHookInput } = await import('./hook.js');
+    const result = evaluateHookInput(await readStdin(), {
+        ignore: value('ignore')?.split(',').filter(Boolean) ?? [],
+        ...(minSeverity ? { minSeverity: minSeverity as Severity } : {}),
+        ...(toolDecision ? { toolDecision: toolDecision as 'deny' | 'ask' } : {}),
+        configPath: value('config'),
+    });
+    if (result.stdout) process.stdout.write(`${result.stdout}\n`);
+    if (result.stderr) process.stderr.write(`${result.stderr}\n`);
+    process.exitCode = result.exitCode;
+}
+
+async function runConfigCommand(args: string[]): Promise<void> {
+    const subcommand = (args[0] ?? '').replace(/^--/, '');
+    if (subcommand === 'check') {
+        const configPathArg = args.find((arg) => arg.startsWith('--config='));
+        const configPath = configPathArg ? configPathArg.replace('--config=', '') : '.promptguardrc';
+        let config: unknown;
+        try {
+            const raw = fs.readFileSync(configPath, 'utf8');
+            config = JSON.parse(raw);
+        } catch {
+            console.error('Error: Cannot read config file "' + configPath + '".');
+            process.exitCode = 1;
+            return;
+        }
+
+        let valid = true;
+        const errors: string[] = [];
+        const validSeverities = new Set(['low', 'medium', 'high', 'critical']);
+
+        const ignore = (config as { ignore?: unknown }).ignore;
+        if (ignore !== undefined && !Array.isArray(ignore)) {
+            errors.push('"ignore" must be an array of strings.');
+            valid = false;
+        }
+
+        const minSeverity = (config as { minSeverity?: unknown }).minSeverity;
+        if (minSeverity !== undefined && minSeverity !== null && !validSeverities.has(minSeverity as string)) {
+            errors.push('"minSeverity" must be one of: ' + [...validSeverities].join(', ') + '.');
+            valid = false;
+        }
+
+        if (typeof (config as { partialRedaction?: unknown }).partialRedaction !== 'undefined' &&
+            typeof (config as { partialRedaction?: boolean }).partialRedaction !== 'boolean') {
+            errors.push('"partialRedaction" must be a boolean.');
+            valid = false;
+        }
+
+        const customPatterns = (config as { customPatterns?: unknown }).customPatterns;
+        if (customPatterns !== undefined) {
+            if (typeof customPatterns !== 'object' || Array.isArray(customPatterns) || customPatterns === null) {
+                errors.push('"customPatterns" must be an object.');
+                valid = false;
+            } else {
+                for (const [name, def] of Object.entries(customPatterns as Record<string, unknown>)) {
+                    const d = def as { pattern?: unknown; severity?: unknown };
+                    if (typeof d !== 'object' || d === null || Array.isArray(d)) {
+                        errors.push('custom pattern "' + name + '" must be an object.');
+                        valid = false;
+                        continue;
+                    }
+                    if (typeof d.pattern !== 'string') {
+                        errors.push('custom pattern "' + name + '" must have a string "pattern".');
+                        valid = false;
+                    } else {
+                        try {
+                            new RegExp(d.pattern, 'g');
+                        } catch {
+                            errors.push('custom pattern "' + name + '" has an invalid regex: ' + d.pattern);
+                            valid = false;
+                        }
+                    }
+                    if (d.severity !== undefined && !validSeverities.has(d.severity as string)) {
+                        errors.push('custom pattern "' + name + '" has an invalid severity: ' + d.severity + '.');
+                        valid = false;
+                    }
+                }
+            }
+        }
+
+        if (valid) {
+            console.log('Config "' + configPath + '" is valid.');
+            process.exitCode = 0;
+        } else {
+            console.error('Config "' + configPath + '" is invalid:');
+            for (const error of errors) {
+                console.error('  - ' + error);
+            }
+            process.exitCode = 1;
+        }
+        return;
+    }
+
+    console.error('Usage: prompt-guard config --check [--config=path]');
+    process.exitCode = 1;
+}
+
 async function main(): Promise<void> {
     const args = process.argv.slice(2);
+    if (args.includes('--help') || args.includes('-h')) {
+        console.log(
+            'Usage: prompt-guard <file|directory> [--ignore=type,...] [--json|--sarif] [--html[=file]] [--junit[=file]] [--audit-log[=file]]\n' +
+                '       [--exclude=path,...] excludes paths relative to the scan root\n' +
+                '       prompt-guard vault <set|list|delete|catalog|capture|export|import|popup> ...\n' +
+                '       prompt-guard hook [--ignore=type,...] [--min-severity=level]\n' +
+                '       prompt-guard config --check [--config=file]',
+        );
+        return;
+    }
     if (args[0] === 'vault') {
         await runVaultCommand(args.slice(1));
         return;
     }
+    if (args[0] === 'hook') {
+        await runHookCommand(args.slice(1));
+        return;
+    }
+    if (args[0] === 'config') {
+        await runConfigCommand(args.slice(1));
+        return;
+    }
+
     const tuiFlag = args.includes('--tui') || args.includes('-t');
 
     if (tuiFlag) {
@@ -150,9 +334,44 @@ async function main(): Promise<void> {
     const ignoreList = ignoreArg
         ? ignoreArg.replace('--ignore=', '').split(',')
         : [];
+    const excludeArg = args.find((arg) => arg.startsWith('--exclude='));
+    const excludeList = excludeArg
+        ? excludeArg
+              .slice('--exclude='.length)
+              .split(',')
+              .map((item) => item.replace(/\\/g, '/').replace(/^\.\/+|\/+$/g, ''))
+              .filter(Boolean)
+        : [];
+
+    function isExcluded(filePath: string): boolean {
+        const relative = path.relative(target!, filePath).split(path.sep).join('/');
+        return excludeList.some(
+            (excluded) => relative === excluded || relative.startsWith(`${excluded}/`),
+        );
+    }
 
     const jsonArg = args.includes('--json');
     const sarifArg = args.includes('--sarif');
+    const htmlArg = args.some((arg) => arg === '--html' || arg.startsWith('--html='));
+    const junitArg = args.some((arg) => arg === '--junit' || arg.startsWith('--junit='));
+    const auditLogArg = args.some(
+        (arg) => arg === '--audit-log' || arg.startsWith('--audit-log='),
+    );
+
+    /** Resolves a flag value from either "--flag=value" or "--flag value". */
+    function flagValue(flag: string): string | undefined {
+        const equals = args.find((arg) => arg.startsWith(flag + '='));
+        if (equals) return equals.replace(flag + '=', '');
+        const index = args.indexOf(flag);
+        if (index >= 0 && index + 1 < args.length) {
+            const next = args[index + 1];
+            if (next !== undefined && !next.startsWith('--')) return next;
+        }
+        return undefined;
+    }
+
+    const auditLogPath = flagValue('--audit-log') ?? 'prompt-guard-audit.log';
+    validateOutputPath(auditLogPath);
     const partialRedactionArg = args.includes('--partial-redaction');
     const configArg = args.find((arg) => arg.startsWith('--config='));
     const configPath = configArg ? configArg.replace('--config=', '') : undefined;
@@ -166,11 +385,15 @@ async function main(): Promise<void> {
             configPath,
         });
 
+        if (htmlArg || junitArg || auditLogArg) {
+            reportFiles.push({ filePath, result, text: content });
+        }
+
         if (!result.isSafe) {
             if (jsonArg) {
                 results.push({ file: filePath, result });
             } else if (sarifArg) {
-                sarifResults.push({ file: filePath, result });
+                sarifResults.push({ file: filePath, result, content });
             } else {
                 if (exitCode === 0) {
                     console.log('🚨 Security risk detected!');
@@ -184,7 +407,7 @@ async function main(): Promise<void> {
             if (jsonArg) {
                 results.push({ file: filePath, result });
             } else if (sarifArg) {
-                sarifResults.push({ file: filePath, result });
+                sarifResults.push({ file: filePath, result, content });
             } else {
                 console.log(`✅ ${filePath} is clean and safe.`);
             }
@@ -195,6 +418,7 @@ async function main(): Promise<void> {
         const entries = fs.readdirSync(dir, { withFileTypes: true });
         for (const entry of entries) {
             const full = path.join(dir, entry.name);
+            if (isExcluded(full)) continue;
             if (entry.isDirectory()) {
                 walkDir(full);
             } else if (entry.isFile()) {
@@ -205,7 +429,8 @@ async function main(): Promise<void> {
 
     let exitCode = 0;
     const results: Array<{ file: string; result: ScanResult }> = [];
-    const sarifResults: Array<{ file: string; result: ScanResult }> = [];
+    const sarifResults: Array<{ file: string; result: ScanResult; content: string }> = [];
+    const reportFiles: Array<{ filePath: string; result: ScanResult; text: string }> = [];
 
     if (!target) {
         console.error('Error: Please provide a file or directory path to scan.');
@@ -221,7 +446,7 @@ async function main(): Promise<void> {
     const stat = fs.statSync(target);
     if (stat.isDirectory()) {
         walkDir(target);
-    } else {
+    } else if (!isExcluded(target)) {
         scanFile(target);
     }
 
@@ -241,38 +466,33 @@ async function main(): Promise<void> {
     }
 
     if (sarifArg) {
-        const sarifLogs = sarifResults.map((r) =>
-            generateSarif(r.file, r.result),
-        );
-        const allRules: Record<string, number> = {};
-        let ruleCounter = 0;
+        const sarifLogs = sarifResults.map((r) => generateSarif(r.file, r.result, r.content));
+        // Rule indexes are per-file in each log; re-map them onto the merged rule list.
+        const ruleIndexById = new Map<string, number>();
         const mergedResults: any[] = [];
         const mergedRules: any[] = [];
 
-        sarifLogs.forEach((log) => {
-            const rules = log.runs[0]?.tool.driver.rules || [];
-            const res = log.runs[0]?.results || [];
-            rules.forEach((rule: any) => {
-                if (!allRules[rule.id]) {
-                    allRules[rule.id] = ruleCounter;
+        for (const log of sarifLogs) {
+            for (const rule of log.runs[0]?.tool.driver.rules ?? []) {
+                if (!ruleIndexById.has(rule.id)) {
+                    ruleIndexById.set(rule.id, mergedRules.length);
                     mergedRules.push(rule);
-                    ruleCounter++;
                 }
-            });
-            res.forEach((result: any) => {
-                mergedResults.push(result);
-            });
-        });
+            }
+            for (const result of log.runs[0]?.results ?? []) {
+                mergedResults.push({ ...result, ruleIndex: ruleIndexById.get(result.ruleId) });
+            }
+        }
 
         const mergedSarif = {
             version: '2.1.0',
-            schema: 'https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json',
+            $schema: 'https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json',
             runs: [
                 {
                     tool: {
                         driver: {
                             name: 'Prompt Guard',
-                            version: '2.0.0',
+                            version: TOOL_VERSION,
                             rules: mergedRules,
                         },
                     },
@@ -284,7 +504,81 @@ async function main(): Promise<void> {
         console.log(JSON.stringify(mergedSarif, null, 2));
     }
 
+    if (htmlArg) {
+        const report = generateHtmlReport(reportFiles, {
+            title: 'Prompt Guard - Scan Report',
+            generatedBy: 'prompt-guard CLI',
+        });
+        const outPath = flagValue('--html');
+        if (outPath) {
+            validateOutputPath(outPath);
+            fs.writeFileSync(outPath, report, 'utf8');
+            console.log('HTML report written to ' + outPath);
+        } else {
+            console.log(report);
+        }
+    }
+
+    if (junitArg) {
+        const xml = generateJunitXml(reportFiles, {
+            generatedBy: 'prompt-guard CLI',
+        });
+        const outPath = flagValue('--junit');
+        if (outPath) {
+            validateOutputPath(outPath);
+            fs.writeFileSync(outPath, xml, 'utf8');
+            console.log('JUnit report written to ' + outPath);
+        } else {
+            console.log(xml);
+        }
+    }
+
+    if (auditLogArg) {
+        for (const rf of reportFiles) {
+            const counts = severityCountsFromMatches(rf.result.matches);
+            appendAuditLog(auditLogPath, {
+                filePath: rf.filePath,
+                isSafe: rf.result.isSafe,
+                matchCount: rf.result.matches.length,
+                severityCounts: counts,
+                types: rf.result.matches.map((m) => m.type),
+            });
+        }
+        console.log('Audit log appended to ' + auditLogPath);
+    }
+
     process.exit(exitCode);
+}
+
+function severityCountsFromMatches(matches: { severity: Severity }[]): Record<Severity, number> {
+    const counts: Record<Severity, number> = { critical: 0, high: 0, medium: 0, low: 0 };
+    for (const match of matches) {
+        counts[match.severity] = (counts[match.severity] ?? 0) + 1;
+    }
+    return counts;
+}
+
+/**
+ * Validates a user-supplied output path to prevent path traversal.
+ * Rejects '..' segments and absolute paths that escape the cwd.
+ */
+export function validateOutputPath(filePath: string): void {
+    const segments = filePath.split(/[/\\]/);
+    for (const segment of segments) {
+        if (segment === '..') {
+            throw new Error('Unsafe path: ".." segments are not allowed.');
+        }
+    }
+    if (path.isAbsolute(filePath)) {
+        const resolved = path.resolve(filePath);
+        const cwd = path.resolve(process.cwd());
+        const relative = path.relative(cwd, resolved);
+        if (relative.startsWith('..') || path.isAbsolute(relative)) {
+            throw new Error(
+                'Unsafe path: absolute paths must be within the current working directory.',
+            );
+        }
+    }
 }
 
 main().catch((error: unknown) => {

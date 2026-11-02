@@ -2,6 +2,16 @@ import { PII_PATTERNS, INJECTION_PATTERNS } from './patterns';
 import * as fs from 'fs';
 import * as path from 'path';
 
+/** Package version, reported as the SARIF tool version (works from src/ and dist/). */
+export const TOOL_VERSION: string = (() => {
+	try {
+		const pkg = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'package.json'), 'utf8'));
+		return typeof pkg.version === 'string' ? pkg.version : '0.0.0';
+	} catch {
+		return '0.0.0';
+	}
+})();
+
 export type Severity = 'low' | 'medium' | 'high' | 'critical';
 
 export interface ScanMatch {
@@ -69,7 +79,7 @@ export interface SarifLocation {
 
 export interface SarifLog {
 	version: '2.1.0';
-	schema: string;
+	$schema: string;
 	runs: SarifRun[];
 }
 
@@ -123,6 +133,27 @@ export function scanText(text: string, options: ScanOptions = {}): ScanResult {
 	const minRank = minSeverity ? severityRank(minSeverity) : 0;
 	let sanitizedText = text;
 	const matches: ScanMatch[] = [];
+	const redact = (value: string, type: string) =>
+		partialRedaction ? partialRedact(value, type) : `[REDACTED_${type.toUpperCase()}]`;
+
+	// Record every match at its exact offset in the original text, then redact
+	// each occurrence with its own value (not the first match's value).
+	const collectMatches = (pattern: RegExp, type: string, severity: Severity): void => {
+		const globalPattern = pattern.global ? pattern : new RegExp(pattern.source, `${pattern.flags}g`);
+		for (const match of text.matchAll(globalPattern)) {
+			if (match[0].length === 0 || match.index === undefined) continue;
+			matches.push({
+				type,
+				value: match[0],
+				severity,
+				start: match.index,
+				end: match.index + match[0].length,
+			});
+		}
+		sanitizedText = sanitizedText.replace(globalPattern, (value: string) =>
+			value.length === 0 ? value : redact(value, type),
+		);
+	};
 
 	for (const [type, def] of Object.entries(PII_PATTERNS)) {
 		if (ignoreList.includes(type)) {
@@ -132,25 +163,7 @@ export function scanText(text: string, options: ScanOptions = {}): ScanResult {
 		if (severityRank(severity) < minRank) {
 			continue;
 		}
-		const found = text.match(pattern);
-		if (found) {
-			let offset = 0;
-			for (const val of found) {
-				const idx = text.indexOf(val, offset);
-				if (idx >= 0) {
-					matches.push({
-						type,
-						value: val,
-						severity,
-						start: idx,
-						end: idx + val.length,
-					});
-					offset = idx + val.length;
-				}
-				const replacement = partialRedaction ? partialRedact(val, type) : `[REDACTED_${type.toUpperCase()}]`;
-				sanitizedText = sanitizedText.replace(pattern, replacement);
-			}
-		}
+		collectMatches(pattern, type, severity);
 	}
 
 	if (!ignoreList.includes('prompt_injection')) {
@@ -184,18 +197,7 @@ export function scanText(text: string, options: ScanOptions = {}): ScanResult {
 				if (severityRank(def.severity) < minRank) {
 					continue;
 				}
-				const found = text.match(pattern);
-				if (found) {
-					for (const val of found) {
-						matches.push({
-							type,
-							value: val,
-							severity: def.severity,
-						});
-						const replacement = partialRedaction ? partialRedact(val, type) : `[REDACTED_${type.toUpperCase()}]`;
-						sanitizedText = sanitizedText.replace(pattern, replacement);
-					}
-				}
+				collectMatches(pattern, type, def.severity);
 			} catch {
 				// Skip invalid custom patterns
 			}
@@ -209,7 +211,25 @@ export function scanText(text: string, options: ScanOptions = {}): ScanResult {
 	};
 }
 
-export function generateSarif(filePath: string, result: ScanResult): SarifLog {
+/** Converts a character offset into a 1-based SARIF line/column position. */
+function toPosition(text: string, offset: number): { line: number; column: number } {
+	let line = 1;
+	let lineStart = 0;
+	for (let i = 0; i < offset && i < text.length; i++) {
+		if (text[i] === '\n') {
+			line++;
+			lineStart = i + 1;
+		}
+	}
+	return { line, column: offset - lineStart + 1 };
+}
+
+/**
+ * Builds a SARIF log for one file. Pass the scanned `text` to get accurate
+ * line/column regions; without it every region points at line 1.
+ * Matched values are never copied into the report.
+ */
+export function generateSarif(filePath: string, result: ScanResult, text?: string): SarifLog {
 	const rules: SarifRule[] = [];
 	const results: SarifResult[] = [];
 	const ruleMap: Record<string, number> = {};
@@ -223,7 +243,7 @@ export function generateSarif(filePath: string, result: ScanResult): SarifLog {
 
 	let ruleIndex = 0;
 	result.matches.forEach((m) => {
-		if (!ruleMap[m.type]) {
+		if (!Object.hasOwn(ruleMap, m.type)) {
 			ruleMap[m.type] = ruleIndex;
 			rules.push({
 				id: m.type,
@@ -236,20 +256,24 @@ export function generateSarif(filePath: string, result: ScanResult): SarifLog {
 			ruleIndex++;
 		}
 
+		const hasOffsets = text !== undefined && m.start !== undefined && m.end !== undefined;
+		const start = hasOffsets ? toPosition(text, m.start!) : { line: 1, column: 1 };
+		const end = hasOffsets ? toPosition(text, m.end!) : { line: 1, column: m.value.length + 1 };
+
 		results.push({
 			ruleId: m.type,
 			ruleIndex: ruleMap[m.type]!,
 			level: severityToLevel[m.severity],
-			message: { text: `${m.type} (${m.severity}): ${m.value}` },
+			message: { text: `${m.type} (${m.severity}) detected; value withheld from report.` },
 			locations: [
 				{
 					physicalLocation: {
 						artifactLocation: { uri: filePath },
 						region: {
-							startLine: 1,
-							startColumn: 1,
-							endLine: 1,
-							endColumn: m.value.length + 1,
+							startLine: start.line,
+							startColumn: start.column,
+							endLine: end.line,
+							endColumn: end.column,
 						},
 					},
 				},
@@ -259,13 +283,13 @@ export function generateSarif(filePath: string, result: ScanResult): SarifLog {
 
 	return {
 		version: '2.1.0',
-		schema: 'https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json',
+		$schema: 'https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json',
 		runs: [
 			{
 				tool: {
 					driver: {
 						name: 'Prompt Guard',
-						version: '2.0.0',
+						version: TOOL_VERSION,
 						rules,
 					},
 				},

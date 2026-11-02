@@ -8,6 +8,8 @@ on:
 
 permissions:
   contents: read
+  # Required for SARIF upload to GitHub code scanning.
+  security-events: write
 
 jobs:
   scan:
@@ -30,6 +32,14 @@ jobs:
 
       - name: Run tests
         run: npm test
+
+      - name: Scan source modules with Prompt Guard (SARIF)
+        run: node dist/cli.js src --sarif --ignore=socialHandle --exclude=patterns.ts > prompt-guard.sarif || true
+
+      - name: Upload SARIF to GitHub code scanning
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: prompt-guard.sarif
 
       - name: Scan clean fixture (must pass)
         run: node dist/cli.js examples/clean.txt

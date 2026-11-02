@@ -1,0 +1,11 @@
+repos:
+  - repo: local
+    hooks:
+      - id: prompt-guard
+        name: Prompt Guard pre-commit scan
+        entry: node scripts/pre-commit.js
+        language: system
+        types: [text]
+        pass_filenames: false
+        # Requires dist/ to be built; run `npm run build` before committing.
+        stages: [commit]
