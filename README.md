@@ -293,6 +293,60 @@ Use a unique, strong passphrase and keep a recoverable copy outside the vault;
 losing it means the encrypted secrets cannot be recovered. The vault is local
 to the current machine and does not sync or call a network service.
 
+### Two-Factor Authentication (2FA)
+Protect vault access with TOTP (authenticator-app-compatible) and single-use
+backup codes:
+
+```sh
+prompt-guard vault setup-2fa mysecret
+```
+
+This shows a QR code to scan with Google Authenticator, Authy, Microsoft
+Authenticator, or 1Password, plus 8 backup codes — save them somewhere safe;
+each works once.
+
+Subsequent vault operations require both the passphrase and a TOTP code:
+
+```sh
+prompt-guard vault 2fa <6-digit-code>
+prompt-guard vault list
+prompt-guard vault 2fa-status
+prompt-guard vault backup-codes
+prompt-guard vault disable-2fa
+```
+
+Five failed 2FA attempts trigger a 15-minute lockout. Backup codes are
+single-use and stored as SHA-256 hashes — never plaintext — so an attacker
+who reads the vault file still cannot recover them.
+
+### Security Audit Logging
+Every security-relevant vault event is recorded in an append-only audit log:
+
+```sh
+prompt-guard vault set mysecret   # logs vault_set
+prompt-guard vault 2fa 123456     # logs 2fa_verify_success
+prompt-guard vault delete mysecret # logs secret_delete
+```
+
+Log entries contain only metadata (event type, timestamp, counts) — never
+secret values or TOTP secrets. Audit log files use restrictive permissions
+(0o600) and directories use 0o700.
+
+Read the log back:
+
+```ts
+import { readSecurityLog } from '@ai-clyde/promptguard';
+
+const events = readSecurityLog('./prompt-guard-audit.log');
+for (const e of events) {
+  console.log(e.timestamp, e.event, e.detail);
+}
+```
+
+Logged events: `vault_open`, `vault_close`, `2fa_enroll`,
+`2fa_verify_success`, `2fa_verify_failure`, `2fa_lockout`,
+`2fa_disable`, `secret_access`, `secret_create`, `secret_delete`.
+
 ## Claude Code hook
 
 `prompt-guard hook` plugs into Claude Code (and other harnesses that use the
@@ -627,9 +681,9 @@ Commit and push all intended release changes, then push a tag matching the versi
 
 ```sh
 git add <intended-release-files>
-git commit -m "chore: release v1.0.3"
+git commit -m "chore: release v1.0.4"
 git push origin master
-git tag v1.0.3
+git tag v1.0.4
 git push origin v1.0.3
 ```
 
