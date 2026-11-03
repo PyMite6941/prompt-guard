@@ -227,13 +227,82 @@ export function readAuditLog(logPath: string): AuditLogEntry[] {
     if (!fs.existsSync(logPath)) return [];
 	const raw = fs.readFileSync(logPath, 'utf8');
 	const entries: AuditLogEntry[] = [];
-	for (const line of raw.split(/\r?\n/)) {
-		if (!line.trim()) continue;
-		try {
-			entries.push(JSON.parse(line) as AuditLogEntry);
-		} catch {
-			// Skip corrupt lines; keep the log append-only.
-		}
+	const NL = String.fromCharCode(10);
+	for (const line of raw.split(NL)) {
+	    const trimmed = line.replace(/\r$/, '');
+	    if (!trimmed) continue;
+	    try {
+	        entries.push(JSON.parse(trimmed) as AuditLogEntry);
+	    } catch {
+	        // Skip corrupt lines; keep the log append-only.
+	    }
 	}
 	return entries;
-}
+	}
+
+	/** Type of security event for the security audit log. */
+	export type SecurityEventType =
+	| 'vault_open'
+	| 'vault_close'
+	| '2fa_enroll'
+	| '2fa_verify_success'
+	| '2fa_verify_failure'
+	| '2fa_lockout'
+	| '2fa_disable'
+	| 'secret_access'
+	| 'secret_create'
+	| 'secret_delete';
+
+	/** A single security audit log entry.
+	* Contains only metadata — never secret values or TOTP secrets.
+	*/
+	export interface SecurityLogEntry {
+	timestamp: string;
+	event: SecurityEventType;
+	detail: Record<string, string | number | boolean>;
+	}
+
+	/**
+	* Appends a security event to an append-only security audit log (JSON lines).
+	* Never writes secret values, TOTP secrets, or backup codes to the log.
+	*/
+	export function appendSecurityLog(
+	logPath: string,
+	entry: Omit<SecurityLogEntry, 'timestamp'>,
+	): void {
+	validateOutputPath(logPath);
+	const record: SecurityLogEntry = {
+	    ...entry,
+	    timestamp: new Date().toISOString(),
+	};
+	const directory = path.dirname(logPath);
+	if (directory && !fs.existsSync(directory)) {
+	    fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
+	}
+	fs.appendFileSync(logPath, `${JSON.stringify(record)}\n`, {
+	    encoding: 'utf8',
+	    mode: 0o600,
+	});
+	}
+
+	/**
+	* Reads security audit log entries from a JSON lines file.
+	* Returns an empty array if the file does not exist.
+	*/
+	export function readSecurityLog(logPath: string): SecurityLogEntry[] {
+	validateOutputPath(logPath);
+	if (!fs.existsSync(logPath)) return [];
+	const raw = fs.readFileSync(logPath, 'utf8');
+	const entries: SecurityLogEntry[] = [];
+	const NL = String.fromCharCode(10);
+	for (const line of raw.split(NL)) {
+	    const trimmed = line.replace(/\r$/, '');
+	    if (!trimmed) continue;
+	    try {
+	        entries.push(JSON.parse(trimmed) as SecurityLogEntry);
+	    } catch {
+	        // Skip corrupt lines; keep the log append-only.
+	    }
+	}
+	return entries;
+	}

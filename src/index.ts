@@ -6,6 +6,8 @@ export { createVaultCatalogTool, getDefaultVaultPath, SecretVault } from './vaul
 export { launchVaultPopup } from './vault-popup';
 export type { VaultPopupOptions } from './vault-popup';
 export type { SafePromptOptions } from './ai';
+export { scanModelResponse, sanitizeModelResponse } from './ai';
+export type { ModelResponseScanResult, ModelResponseMatch } from './ai';
 export type {
     SecretVaultOptions,
     SecretMeta,
@@ -16,9 +18,7 @@ export type {
     TwoFactorEnrollment,
 } from './vault';
 export type { Severity, ScanMatch, ScanResult, ScanOptions } from './scanner';
-export { scanModelResponse } from './ai';
-export {
-	generateHtmlReport,
+export { generateHtmlReport,
 	generateJunitXml,
 	appendAuditLog,
 	readAuditLog,
