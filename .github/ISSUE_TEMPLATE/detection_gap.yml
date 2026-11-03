@@ -1,0 +1,29 @@
+name: Detection gap (false positive / false negative)
+description: Prompt Guard missed something it should catch, or flagged something it shouldn't.
+labels: [detection]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Use synthetic examples only** — never paste a real key, token, or someone's personal data.
+  - type: dropdown
+    id: kind
+    attributes:
+      label: Type
+      options:
+        - False negative (missed)
+        - False positive (wrongly flagged)
+    validations:
+      required: true
+  - type: textarea
+    id: sample
+    attributes:
+      label: Synthetic sample text
+      render: text
+    validations:
+      required: true
+  - type: input
+    id: category
+    attributes:
+      label: Category
+      placeholder: e.g. email, apiKey, injection

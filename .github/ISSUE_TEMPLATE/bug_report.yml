@@ -1,0 +1,35 @@
+name: Bug report
+description: Something in Prompt Guard isn't working as documented.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Do not paste real secrets, keys, or personal data.** Use made-up values
+        that reproduce the problem. Report security vulnerabilities privately via
+        the Security tab instead of here.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: Include the command or code you ran and the output you got.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect?
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Prompt Guard version
+      placeholder: e.g. 1.0.4
+    validations:
+      required: true
+  - type: input
+    id: env
+    attributes:
+      label: Node.js version and OS
+      placeholder: e.g. Node 24.1, Windows 11
