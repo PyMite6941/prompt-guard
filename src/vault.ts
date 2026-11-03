@@ -18,6 +18,28 @@ import {
     type TOTPOptions,
     type BackupCodeResult,
 } from './otp';
+
+/** Validates a file path to prevent path traversal in vault export/import. */
+function validateVaultPath(filePath: string): void {
+    const segments = filePath.split(/[/\\]/);
+    for (const segment of segments) {
+        if (segment === '..') {
+            throw new Error('Unsafe path: ".." segments are not allowed.');
+        }
+    }
+    if (require('node:path').isAbsolute(filePath)) {
+        const resolved = require('node:path').resolve(filePath);
+        const cwd = require('node:path').resolve(process.cwd());
+        const tmpDir = require('node:os').tmpdir();
+        const relativeToCwd = require('node:path').relative(cwd, resolved);
+        const relativeToTmp = require('node:path').relative(tmpDir, resolved);
+        const inCwd = !relativeToCwd.startsWith('..') && !require('node:path').isAbsolute(relativeToCwd);
+        const inTmp = !relativeToTmp.startsWith('..') && !require('node:path').isAbsolute(relativeToTmp);
+        if (!inCwd && !inTmp) {
+            throw new Error('Unsafe path: absolute paths must be within the current working directory or system temp directory.');
+        }
+    }
+}
 const VERIFIER = Buffer.from('prompt-guard-vault-v1');
 const KEY_LENGTH = 32;
 const SCRYPT_OPTIONS = { N: 32768, r: 8, p: 1, maxmem: 64 * 1024 * 1024 };
@@ -338,16 +360,19 @@ function decryptMeta(key: Buffer, encrypted: EncryptedValue): VaultMetadata {
 }
 
 export class SecretVault {
-    private closed = false;
+    #key: Buffer;
+    #twoFactorConfig: TwoFactorConfig | null = null;
+    #_pendingBackupCodes: string[] | undefined;
+    closed = false;
     private twoFactorVerified = false;
-    private twoFactorConfig: TwoFactorConfig | null = null;
-    private _pendingBackupCodes: string[] | undefined;
 
     private constructor(
+        keyParam: Buffer,
         private readonly vaultPath: string,
-        private readonly key: Buffer,
         private document: VaultDocument,
-    ) {}
+    ) {
+        this.#key = keyParam;
+    }
 
     static async open(options: SecretVaultOptions): Promise<SecretVault> {
         if (options.passphrase.length < 12) {
@@ -406,7 +431,7 @@ export class SecretVault {
                     secrets,
                     meta,
                 };
-                const vault = new SecretVault(vaultPath, key, migrated);
+                const vault = new SecretVault(key, vaultPath, migrated);
                 try {
                     await vault.persist(vault.document);
                 } catch (error) {
@@ -415,7 +440,7 @@ export class SecretVault {
                 }
                 return vault;
             }
-            const vault = new SecretVault(vaultPath, key, document);
+            const vault = new SecretVault(key, vaultPath, document);
             if (document.version === 2 && document.twoFactor) {
                 const tfPlaintext = decrypt(key, document.twoFactor);
                 try {
@@ -451,7 +476,7 @@ export class SecretVault {
             secrets: {},
             meta: {},
         };
-        const vault = new SecretVault(vaultPath, key, document);
+        const vault = new SecretVault(key, vaultPath, document);
         try {
             await vault.persist(document);
         } catch (error) {
@@ -512,7 +537,7 @@ export class SecretVault {
         });
         const document: VaultDocument = {
             ...this.document,
-            meta: { ...this.document.meta, [storageId]: encryptMeta(this.key, { id, ...meta }) },
+            meta: { ...this.document.meta, [storageId]: encryptMeta(this.#key, { id, ...meta }) },
         };
         await this.persist(document);
         this.document = document;
@@ -531,7 +556,7 @@ export class SecretVault {
         const plaintext = Buffer.from(value, 'utf8');
         let encrypted: EncryptedValue;
         try {
-            encrypted = encrypt(this.key, plaintext);
+            encrypted = encrypt(this.#key, plaintext);
         } finally {
             plaintext.fill(0);
         }
@@ -546,7 +571,7 @@ export class SecretVault {
             meta: {
                 ...this.document.meta,
                 [storageId]:
-                    this.document.meta[storageId] ?? encryptMeta(this.key, { id }),
+                    this.document.meta[storageId] ?? encryptMeta(this.#key, { id }),
             },
         };
         await this.persist(document);
@@ -588,7 +613,7 @@ export class SecretVault {
 
         let secret: Buffer;
         try {
-            secret = decrypt(this.key, encrypted);
+            secret = decrypt(this.#key, encrypted);
         } catch {
             throw new Error(`Secret "${id}" could not be decrypted.`);
         }
@@ -692,7 +717,7 @@ export class SecretVault {
     }
 
     private _setTwoFactorConfig(config: TwoFactorConfig | null): void {
-        this.twoFactorConfig = config;
+        this.#twoFactorConfig = config;
     }
 
     private validateId(id: string): void {
@@ -718,7 +743,7 @@ export class SecretVault {
         if (!encrypted) {
             throw new Error('Vault metadata is missing or corrupted.');
         }
-        const metadata = decryptMeta(this.key, encrypted);
+        const metadata = decryptMeta(this.#key, encrypted);
         if (!/^[a-zA-Z0-9._-]{1,128}$/.test(metadata.id)) {
             throw new Error('Vault metadata is corrupted.');
         }
@@ -752,12 +777,12 @@ export class SecretVault {
 
     /** Returns true when 2FA is enabled but not yet verified for this session. */
     requireTwoFactor(): boolean {
-        return !!(this.twoFactorConfig?.enabled && !this.twoFactorVerified);
+        return !!(this.#twoFactorConfig?.enabled && !this.twoFactorVerified);
     }
 
     /** Returns true when 2FA has been configured on this vault. */
     isTwoFactorConfigured(): boolean {
-        return !!this.twoFactorConfig?.enabled;
+        return !!this.#twoFactorConfig?.enabled;
     }
 
     /** Returns two-factor status for CLI/reporting. Never reveals the TOTP secret. */
@@ -768,16 +793,16 @@ export class SecretVault {
         lockoutUntil: number;
     } {
         return {
-            configured: !!this.twoFactorConfig?.enabled,
+            configured: !!this.#twoFactorConfig?.enabled,
             verified: this.twoFactorVerified,
-            failedAttempts: this.twoFactorConfig?.failedAttempts ?? 0,
-            lockoutUntil: this.twoFactorConfig?.lockoutUntil ?? 0,
+            failedAttempts: this.#twoFactorConfig?.failedAttempts ?? 0,
+            lockoutUntil: this.#twoFactorConfig?.lockoutUntil ?? 0,
         };
     }
 
     close(): void {
         if (!this.closed) {
-            this.key.fill(0);
+            this.#key.fill(0);
             this.closed = true;
         }
     }
@@ -802,6 +827,7 @@ export class SecretVault {
     /** Writes the current encrypted vault document to `exportPath` as a backup bundle. */
     async exportTo(exportPath: string): Promise<void> {
         this.ensureOpen();
+        validateVaultPath(exportPath);
         await this.persist(this.document, exportPath);
     }
 
@@ -832,7 +858,7 @@ export class SecretVault {
      */
     async verifyTwoFactor(code: string): Promise<void> {
         this.ensureOpenUnlocked();
-        const config = this.twoFactorConfig;
+        const config = this.#twoFactorConfig;
         if (!config?.enabled) {
             throw new Error('Two-factor authentication is not configured on this vault.');
         }
@@ -883,7 +909,7 @@ export class SecretVault {
      */
     async startTwoFactorEnrollment(): Promise<TwoFactorEnrollment> {
         this.ensureOpen();
-        if (this.twoFactorConfig?.enabled) {
+        if (this.#twoFactorConfig?.enabled) {
             throw new Error('Two-factor authentication is already configured.');
         }
 
@@ -891,14 +917,14 @@ export class SecretVault {
         const { codes, hashes } = generateBackupCodes(8, 12);
 
         // Store pending enrollment in memory (not persisted yet).
-        this.twoFactorConfig = {
+        this.#twoFactorConfig = {
             enabled: false, // not enabled until confirmed
             totpSecret: secret,
             backupCodes: hashes,
             failedAttempts: 0,
             lockoutUntil: 0,
         };
-        this._pendingBackupCodes = codes;
+        this.#_pendingBackupCodes = codes;
 
         return {
             secret,
@@ -913,11 +939,11 @@ export class SecretVault {
      */
     async completeTwoFactorEnrollment(verificationCode: string): Promise<void> {
         this.ensureOpen();
-        const config = this.twoFactorConfig;
+        const config = this.#twoFactorConfig;
         if (!config || config.enabled) {
             throw new Error('No pending two-factor enrollment. Call startTwoFactorEnrollment first.');
         }
-        if (!this._pendingBackupCodes) {
+        if (!this.#_pendingBackupCodes) {
             throw new Error('Enrollment state is corrupted.');
         }
 
@@ -933,7 +959,7 @@ export class SecretVault {
         };
         await this.persist(document);
         this.document = document;
-        this._pendingBackupCodes = undefined;
+        this.#_pendingBackupCodes = undefined;
     }
 
     /**
@@ -941,13 +967,13 @@ export class SecretVault {
      */
     async disableTwoFactor(): Promise<void> {
         this.ensureOpen();
-        if (!this.twoFactorConfig?.enabled) {
+        if (!this.#twoFactorConfig?.enabled) {
             throw new Error('Two-factor authentication is not configured.');
         }
         if (!this.twoFactorVerified) {
             throw new Error('Two-factor authentication must be verified before disabling.');
         }
-        this.twoFactorConfig = null;
+        this.#twoFactorConfig = null;
         this.twoFactorVerified = false;
         const { twoFactor: _tf, ...documentWithout2FA } = this.document;
         const document: VaultDocument = documentWithout2FA;
@@ -958,17 +984,17 @@ export class SecretVault {
     /** Regenerates backup codes. Requires 2FA to be verified first. */
     async regenerateBackupCodes(): Promise<string[]> {
         this.ensureOpen();
-        if (!this.twoFactorConfig?.enabled) {
+        if (!this.#twoFactorConfig?.enabled) {
             throw new Error('Two-factor authentication is not configured.');
         }
         if (!this.twoFactorVerified) {
             throw new Error('Two-factor authentication must be verified first.');
         }
         const { codes, hashes } = generateBackupCodes(8, 12);
-        this.twoFactorConfig.backupCodes = hashes;
-        this.twoFactorConfig.failedAttempts = 0;
-        this.twoFactorConfig.lockoutUntil = 0;
-        await this.persistTwoFactor(this.twoFactorConfig);
+        this.#twoFactorConfig.backupCodes = hashes;
+        this.#twoFactorConfig.failedAttempts = 0;
+        this.#twoFactorConfig.lockoutUntil = 0;
+        await this.persistTwoFactor(this.#twoFactorConfig);
         return codes;
     }
 
@@ -976,7 +1002,7 @@ export class SecretVault {
     private encryptTwoFactor(config: TwoFactorConfig): EncryptedValue {
         const plaintext = Buffer.from(JSON.stringify(config), 'utf8');
         try {
-            return encrypt(this.key, plaintext);
+            return encrypt(this.#key, plaintext);
         } finally {
             plaintext.fill(0);
         }
