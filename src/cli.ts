@@ -4,10 +4,10 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { getDefaultVaultPath, SecretVault } from './vault';
 import {
-	generateHtmlReport,
-	generateJunitXml,
-	appendAuditLog,
-	type ReportFile,
+    generateHtmlReport,
+    generateJunitXml,
+    appendAuditLog,
+    type ReportFile,
 } from './report';
 
 function readHidden(prompt: string): Promise<string> {
@@ -68,16 +68,24 @@ async function runVaultCommand(args: string[]): Promise<void> {
             'capture',
             'export',
             'import',
+            'setup-2fa',
+            '2fa',
+            '2fa-status',
+            'backup-codes',
+            'disable-2fa',
         ].includes(operation ?? '')
     ) {
         console.error(
-            'Usage: prompt-guard vault <set <id>|list|delete <id>|catalog|capture <file>|export <file>|import <file>|popup>\nSecret values and passphrases are entered without terminal echo.',
+            'Usage: prompt-guard vault <set <id>|list|delete <id>|catalog|capture <file>|export <file>|import <file>|popup|setup-2fa|2fa <code>|2fa-status|backup-codes|disable-2fa>\\nSecret values and passphrases are entered without terminal echo.',
         );
         process.exitCode = 1;
         return;
     }
     if ((operation === 'set' || operation === 'delete') && !id) {
         throw new Error(`Usage: prompt-guard vault ${operation} <id>.`);
+    }
+    if (operation === '2fa' && !id) {
+        throw new Error('Usage: prompt-guard vault 2fa <code>.');
     }
     if (operation === 'capture' && !id) {
         throw new Error('Usage: prompt-guard vault capture <file>.');
@@ -86,7 +94,7 @@ async function runVaultCommand(args: string[]): Promise<void> {
         throw new Error(`Usage: prompt-guard vault ${operation} <file>.`);
     }
     if (
-        args.length > (operation === 'list' || operation === 'popup' || operation === 'catalog' ? 1 : 2)
+        args.length > (operation === 'list' || operation === 'popup' || operation === 'catalog' || operation === '2fa-status' ? 1 : 2)
     ) {
         throw new Error('Too many arguments for vault command.');
     }
@@ -101,6 +109,7 @@ async function runVaultCommand(args: string[]): Promise<void> {
         operation !== 'set' &&
         operation !== 'popup' &&
         operation !== 'import' &&
+        operation !== 'setup-2fa' &&
         !fs.existsSync(vaultPath)
     ) {
         throw new Error('No vault exists yet; create one with "prompt-guard vault set <id>".');
@@ -137,7 +146,71 @@ async function runVaultCommand(args: string[]): Promise<void> {
 
     const vault = await SecretVault.open({ passphrase: passphrase!, path: vaultPath });
     passphrase = '';
+
+    // If 2FA is required and the operation isn't providing the code, prompt for it.
+    if (
+        vault.requireTwoFactor() &&
+        operation !== '2fa' &&
+        operation !== 'setup-2fa'
+    ) {
+        const code = await readHidden('Two-factor code: ');
+        if (!code) {
+            throw new Error('Two-factor code is required.');
+        }
+        await vault.verifyTwoFactor(code);
+        console.log('Two-factor verified.');
+    }
+
     try {
+        if (operation === 'setup-2fa') {
+            if (vault.isTwoFactorConfigured()) {
+                throw new Error('Two-factor authentication is already configured.');
+            }
+            const enrollment = await vault.startTwoFactorEnrollment();
+            console.log('\n=== Two-Factor Enrollment ===');
+            console.log('Scan this QR code with your authenticator app:');
+            console.log(enrollment.uri);
+            console.log(`\nSecret key: ${enrollment.secret}`);
+            console.log('\nEnter a code from your authenticator app to verify:');
+            const verificationCode = await readHidden('TOTP code: ');
+            if (!verificationCode) {
+                throw new Error('TOTP code is required.');
+            }
+            await vault.completeTwoFactorEnrollment(verificationCode);
+            console.log('\n=== Two-Factor Enabled ===');
+            console.log('Save these backup codes somewhere safe (each can be used once):');
+            enrollment.backupCodes.forEach((c, i) => console.log(`  ${i + 1}. ${c}`));
+            console.log('\nWithout these codes, loss of your authenticator app means lockout.');
+            return;
+        }
+        if (operation === '2fa') {
+            await vault.verifyTwoFactor(id!);
+            console.log('Two-factor verified. Vault unlocked.');
+            return;
+        }
+        if (operation === '2fa-status') {
+            const status = vault.getTwoFactorStatus();
+            console.log(`Configured: ${status.configured}`);
+            console.log(`Verified: ${status.verified}`);
+            console.log(`Failed attempts: ${status.failedAttempts}`);
+            if (status.lockoutUntil > 0) {
+                const remaining = Math.ceil((status.lockoutUntil - Date.now()) / 1000);
+                console.log(`Locked until: ${remaining} seconds from now`);
+            }
+            return;
+        }
+        if (operation === 'backup-codes') {
+            const codes = await vault.regenerateBackupCodes();
+            console.log('=== New Backup Codes ===');
+            codes.forEach((c, i) => console.log(`  ${i + 1}. ${c}`));
+            console.log('Previous backup codes are now invalid.');
+            return;
+        }
+        if (operation === 'disable-2fa') {
+            await vault.disableTwoFactor();
+            console.log('Two-factor authentication disabled.');
+            return;
+        }
         if (operation === 'capture') {
             const prompt = fs.readFileSync(id!, 'utf8');
             const protectedPrompt = await vault.captureAndRedactPrompt(prompt);
@@ -398,7 +471,15 @@ async function main(): Promise<void> {
                 if (exitCode === 0) {
                     console.log('🚨 Security risk detected!');
                 }
-                console.table(result.matches);
+                // Print matches WITHOUT the detected values (values withheld).
+                console.table(
+                    result.matches.map(({ type, severity, start, end }) => ({
+                        type,
+                        severity,
+                        start: start ?? 0,
+                        end: end ?? 0,
+                    })),
+                );
                 console.log(`\n--- ${filePath} ---`);
                 console.log(result.sanitizedText);
             }
@@ -456,7 +537,12 @@ async function main(): Promise<void> {
                 results.map((r) => ({
                     file: r.file,
                     isSafe: r.result.isSafe,
-                    matches: r.result.matches,
+                    matches: r.result.matches.map(({ type, severity, start, end }) => ({
+                        type,
+                        severity,
+                        start,
+                        end,
+                    })),
                     sanitizedText: r.result.sanitizedText,
                 })),
                 null,

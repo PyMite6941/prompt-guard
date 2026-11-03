@@ -12,6 +12,8 @@ export type {
     AgentSecretInfo,
     CapturedPrompt,
     AgentCatalogTool,
+    TwoFactorConfig,
+    TwoFactorEnrollment,
 } from './vault';
 export type { Severity, ScanMatch, ScanResult, ScanOptions } from './scanner';
 export { scanModelResponse } from './ai';

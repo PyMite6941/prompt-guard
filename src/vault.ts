@@ -9,9 +9,21 @@ import { promises as fs } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { scanText } from './scanner';
+import {
+    generateSecret,
+    generateBackupCodes,
+    verifyBackupCode,
+    verifyTOTP,
+    provisioningUri,
+    type TOTPOptions,
+    type BackupCodeResult,
+} from './otp';
 const VERIFIER = Buffer.from('prompt-guard-vault-v1');
 const KEY_LENGTH = 32;
 const SCRYPT_OPTIONS = { N: 32768, r: 8, p: 1, maxmem: 64 * 1024 * 1024 };
+
+const TWO_FACTOR_MAX_ATTEMPTS = 5;
+const TWO_FACTOR_LOCKOUT_MS = 15 * 60 * 1000; // 15 minutes
 
 interface EncryptedValue {
     iv: string;
@@ -36,6 +48,20 @@ export interface CapturedPrompt {
     secrets: AgentSecretInfo[];
     manualReviewRequired: true;
     warning: string;
+}
+
+export interface TwoFactorConfig {
+    enabled: boolean;
+    totpSecret: string;
+    backupCodes: string[];
+    failedAttempts: number;
+    lockoutUntil: number;
+}
+
+export interface TwoFactorEnrollment {
+    secret: string;
+    uri: string;
+    backupCodes: string[];
 }
 
 const CAPTURE_WARNING =
@@ -97,6 +123,7 @@ interface VaultDocument {
     verifier: EncryptedValue;
     secrets: Record<string, EncryptedValue>;
     meta: Record<string, EncryptedValue>;
+    twoFactor?: EncryptedValue;
 }
 
 interface LegacyVaultDocument {
@@ -194,13 +221,26 @@ function parseDocument(serialized: string): VaultDocument | LegacyVaultDocument 
         if (Object.keys(meta).length !== secretEntries.length) {
             throw new Error('Vault file has an unsupported or invalid format.');
         }
-        return {
+
+        let twoFactor: EncryptedValue | undefined;
+        if (parsed.twoFactor !== undefined && parsed.twoFactor !== null) {
+            if (!isEncryptedValue(parsed.twoFactor)) {
+                throw new Error('Vault file has an unsupported or invalid format.');
+            }
+            twoFactor = parsed.twoFactor;
+        }
+
+        const result: VaultDocument = {
             version: 2,
             salt: parsed.salt,
             verifier: parsed.verifier,
             secrets: Object.fromEntries(secretEntries),
             meta,
         };
+        if (twoFactor !== undefined) {
+            result.twoFactor = twoFactor;
+        }
+        return result;
     }
 
     const meta: Record<string, SecretMeta> = {};
@@ -299,6 +339,9 @@ function decryptMeta(key: Buffer, encrypted: EncryptedValue): VaultMetadata {
 
 export class SecretVault {
     private closed = false;
+    private twoFactorVerified = false;
+    private twoFactorConfig: TwoFactorConfig | null = null;
+    private _pendingBackupCodes: string[] | undefined;
 
     private constructor(
         private readonly vaultPath: string,
@@ -341,6 +384,7 @@ export class SecretVault {
                 throw new Error('Incorrect vault passphrase or corrupted vault file.');
             }
             verifier.fill(0);
+
             if (document.version === 1) {
                 const secrets: Record<string, EncryptedValue> = {};
                 const meta: Record<string, EncryptedValue> = {};
@@ -371,7 +415,31 @@ export class SecretVault {
                 }
                 return vault;
             }
-            return new SecretVault(vaultPath, key, document);
+            const vault = new SecretVault(vaultPath, key, document);
+            if (document.version === 2 && document.twoFactor) {
+                const tfPlaintext = decrypt(key, document.twoFactor);
+                try {
+                    const parsed = JSON.parse(tfPlaintext.toString('utf8'));
+                    if (
+                        typeof parsed.enabled === 'boolean' &&
+                        typeof parsed.totpSecret === 'string' &&
+                        Array.isArray(parsed.backupCodes)
+                    ) {
+                        vault._setTwoFactorConfig({
+                            enabled: parsed.enabled,
+                            totpSecret: parsed.totpSecret,
+                            backupCodes: parsed.backupCodes,
+                            failedAttempts: typeof parsed.failedAttempts === 'number' ? parsed.failedAttempts : 0,
+                            lockoutUntil: typeof parsed.lockoutUntil === 'number' ? parsed.lockoutUntil : 0,
+                        });
+                    } else {
+                        throw new Error('Two-factor config is corrupted.');
+                    }
+                } finally {
+                    tfPlaintext.fill(0);
+                }
+            }
+            return vault;
         }
 
         const salt = randomBytes(16);
@@ -623,6 +691,90 @@ export class SecretVault {
         };
     }
 
+    private _setTwoFactorConfig(config: TwoFactorConfig | null): void {
+        this.twoFactorConfig = config;
+    }
+
+    private validateId(id: string): void {
+        if (!/^[a-zA-Z0-9._-]{1,128}$/.test(id)) {
+            throw new Error(
+                'Secret IDs must be 1-128 characters using letters, numbers, ".", "_" or "-".',
+            );
+        }
+        if (scanText(id).matches.some((match) => match.value === id)) {
+            throw new Error('Secret IDs must not contain a detected credential or personal value.');
+        }
+    }
+
+    private findStorageId(id: string): string | undefined {
+        for (const storageId of Object.keys(this.document.meta)) {
+            if (this.readMetadata(storageId)?.id === id) return storageId;
+        }
+        return undefined;
+    }
+
+    private readMetadata(storageId: string): VaultMetadata {
+        const encrypted = this.document.meta[storageId];
+        if (!encrypted) {
+            throw new Error('Vault metadata is missing or corrupted.');
+        }
+        const metadata = decryptMeta(this.key, encrypted);
+        if (!/^[a-zA-Z0-9._-]{1,128}$/.test(metadata.id)) {
+            throw new Error('Vault metadata is corrupted.');
+        }
+        return metadata;
+    }
+
+    private publicMeta(metadata: VaultMetadata): SecretMeta {
+        return {
+            ...(metadata.name === undefined ? {} : { name: metadata.name }),
+            ...(metadata.tag === undefined ? {} : { tag: metadata.tag }),
+        };
+    }
+
+    private ensureOpen(): void {
+        if (this.closed) {
+            throw new Error('Vault is closed.');
+        }
+        if (this.requireTwoFactor()) {
+            throw new Error(
+                'Two-factor authentication required. Provide a TOTP code or backup code before accessing secrets.',
+            );
+        }
+    }
+
+    /** Ensures the vault is open without checking 2FA state (for 2FA verification itself). */
+    private ensureOpenUnlocked(): void {
+        if (this.closed) {
+            throw new Error('Vault is closed.');
+        }
+    }
+
+    /** Returns true when 2FA is enabled but not yet verified for this session. */
+    requireTwoFactor(): boolean {
+        return !!(this.twoFactorConfig?.enabled && !this.twoFactorVerified);
+    }
+
+    /** Returns true when 2FA has been configured on this vault. */
+    isTwoFactorConfigured(): boolean {
+        return !!this.twoFactorConfig?.enabled;
+    }
+
+    /** Returns two-factor status for CLI/reporting. Never reveals the TOTP secret. */
+    getTwoFactorStatus(): {
+        configured: boolean;
+        verified: boolean;
+        failedAttempts: number;
+        lockoutUntil: number;
+    } {
+        return {
+            configured: !!this.twoFactorConfig?.enabled,
+            verified: this.twoFactorVerified,
+            failedAttempts: this.twoFactorConfig?.failedAttempts ?? 0,
+            lockoutUntil: this.twoFactorConfig?.lockoutUntil ?? 0,
+        };
+    }
+
     close(): void {
         if (!this.closed) {
             this.key.fill(0);
@@ -674,46 +826,169 @@ export class SecretVault {
         }
     }
 
-    private validateId(id: string): void {
-        if (!/^[a-zA-Z0-9._-]{1,128}$/.test(id)) {
+    /**
+     * Verifies a TOTP code or backup code and unlocks two-factor access.
+     * Records failed attempts and enforces lockout after repeated failures.
+     */
+    async verifyTwoFactor(code: string): Promise<void> {
+        this.ensureOpenUnlocked();
+        const config = this.twoFactorConfig;
+        if (!config?.enabled) {
+            throw new Error('Two-factor authentication is not configured on this vault.');
+        }
+        if (config.lockoutUntil > 0 && Date.now() < config.lockoutUntil) {
+            const remaining = Math.ceil((config.lockoutUntil - Date.now()) / 1000);
             throw new Error(
-                'Secret IDs must be 1-128 characters using letters, numbers, ".", "_" or "-".',
+                `Two-factor locked. Try again in ${remaining} seconds.`,
             );
         }
-        if (scanText(id).matches.some((match) => match.value === id)) {
-            throw new Error('Secret IDs must not contain a detected credential or personal value.');
+
+        let verified = false;
+
+        // Try TOTP code first.
+        if (verifyTOTP(code, config.totpSecret)) {
+            verified = true;
+        } else {
+            // Try backup codes (single-use).
+            const backupIndex = config.backupCodes.findIndex((hash) =>
+                verifyBackupCode(code, hash),
+            );
+            if (backupIndex !== -1) {
+                verified = true;
+                config.backupCodes.splice(backupIndex, 1);
+            }
         }
+
+        if (verified) {
+            config.failedAttempts = 0;
+            config.lockoutUntil = 0;
+            this.twoFactorVerified = true;
+            await this.persistTwoFactor(config);
+            return;
+        }
+
+        // Failed attempt.
+        config.failedAttempts += 1;
+        if (config.failedAttempts >= TWO_FACTOR_MAX_ATTEMPTS) {
+            config.lockoutUntil = Date.now() + TWO_FACTOR_LOCKOUT_MS;
+        }
+        await this.persistTwoFactor(config);
+        throw new Error('Invalid two-factor code.');
     }
 
-    private findStorageId(id: string): string | undefined {
-        for (const storageId of Object.keys(this.document.meta)) {
-            if (this.readMetadata(storageId)?.id === id) return storageId;
+    /**
+     * Starts two-factor enrollment. Generates a TOTP secret and backup codes,
+     * stores them pending verification, and returns the enrollment data for
+     * display to the user. Call `completeTwoFactorEnrollment(code)` to finish.
+     */
+    async startTwoFactorEnrollment(): Promise<TwoFactorEnrollment> {
+        this.ensureOpen();
+        if (this.twoFactorConfig?.enabled) {
+            throw new Error('Two-factor authentication is already configured.');
         }
-        return undefined;
-    }
 
-    private readMetadata(storageId: string): VaultMetadata {
-        const encrypted = this.document.meta[storageId];
-        if (!encrypted) {
-            throw new Error('Vault metadata is missing or corrupted.');
-        }
-        const metadata = decryptMeta(this.key, encrypted);
-        if (!/^[a-zA-Z0-9._-]{1,128}$/.test(metadata.id)) {
-            throw new Error('Vault metadata is corrupted.');
-        }
-        return metadata;
-    }
+        const secret = generateSecret();
+        const { codes, hashes } = generateBackupCodes(8, 12);
 
-    private publicMeta(metadata: VaultMetadata): SecretMeta {
+        // Store pending enrollment in memory (not persisted yet).
+        this.twoFactorConfig = {
+            enabled: false, // not enabled until confirmed
+            totpSecret: secret,
+            backupCodes: hashes,
+            failedAttempts: 0,
+            lockoutUntil: 0,
+        };
+        this._pendingBackupCodes = codes;
+
         return {
-            ...(metadata.name === undefined ? {} : { name: metadata.name }),
-            ...(metadata.tag === undefined ? {} : { tag: metadata.tag }),
+            secret,
+            uri: provisioningUri(secret, 'prompt-guard', 'Prompt Guard'),
+            backupCodes: codes,
         };
     }
 
-    private ensureOpen(): void {
-        if (this.closed) {
-            throw new Error('Vault is closed.');
+    /**
+     * Completes two-factor enrollment by verifying a TOTP code against the
+     * pending secret. Persists the config and unlocks 2FA access.
+     */
+    async completeTwoFactorEnrollment(verificationCode: string): Promise<void> {
+        this.ensureOpen();
+        const config = this.twoFactorConfig;
+        if (!config || config.enabled) {
+            throw new Error('No pending two-factor enrollment. Call startTwoFactorEnrollment first.');
         }
+        if (!this._pendingBackupCodes) {
+            throw new Error('Enrollment state is corrupted.');
+        }
+
+        if (!verifyTOTP(verificationCode, config.totpSecret)) {
+            throw new Error('Invalid TOTP code. Scan the QR code and try again.');
+        }
+
+        config.enabled = true;
+        this.twoFactorVerified = true;
+        const document: VaultDocument = {
+            ...this.document,
+            twoFactor: this.encryptTwoFactor(config),
+        };
+        await this.persist(document);
+        this.document = document;
+        this._pendingBackupCodes = undefined;
+    }
+
+    /**
+     * Disables two-factor authentication. Requires 2FA to be verified first.
+     */
+    async disableTwoFactor(): Promise<void> {
+        this.ensureOpen();
+        if (!this.twoFactorConfig?.enabled) {
+            throw new Error('Two-factor authentication is not configured.');
+        }
+        if (!this.twoFactorVerified) {
+            throw new Error('Two-factor authentication must be verified before disabling.');
+        }
+        this.twoFactorConfig = null;
+        this.twoFactorVerified = false;
+        const { twoFactor: _tf, ...documentWithout2FA } = this.document;
+        const document: VaultDocument = documentWithout2FA;
+        await this.persist(document);
+        this.document = document;
+    }
+
+    /** Regenerates backup codes. Requires 2FA to be verified first. */
+    async regenerateBackupCodes(): Promise<string[]> {
+        this.ensureOpen();
+        if (!this.twoFactorConfig?.enabled) {
+            throw new Error('Two-factor authentication is not configured.');
+        }
+        if (!this.twoFactorVerified) {
+            throw new Error('Two-factor authentication must be verified first.');
+        }
+        const { codes, hashes } = generateBackupCodes(8, 12);
+        this.twoFactorConfig.backupCodes = hashes;
+        this.twoFactorConfig.failedAttempts = 0;
+        this.twoFactorConfig.lockoutUntil = 0;
+        await this.persistTwoFactor(this.twoFactorConfig);
+        return codes;
+    }
+
+    /** Encrypts a TwoFactorConfig for storage in the vault document. */
+    private encryptTwoFactor(config: TwoFactorConfig): EncryptedValue {
+        const plaintext = Buffer.from(JSON.stringify(config), 'utf8');
+        try {
+            return encrypt(this.key, plaintext);
+        } finally {
+            plaintext.fill(0);
+        }
+    }
+
+    /** Persists the current two-factor config to disk. */
+    private async persistTwoFactor(config: TwoFactorConfig): Promise<void> {
+        const document: VaultDocument = {
+            ...this.document,
+            twoFactor: this.encryptTwoFactor(config),
+        };
+        await this.persist(document);
+        this.document = document;
     }
 }

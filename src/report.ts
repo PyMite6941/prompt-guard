@@ -212,14 +212,14 @@ export interface AuditLogEntry {
 export function appendAuditLog(logPath: string, entry: Omit<AuditLogEntry, 'timestamp'>): void {
     validateOutputPath(logPath);
     const record: AuditLogEntry = {
-		...entry,
-		timestamp: new Date().toISOString(),
-	};
-	const directory = path.dirname(logPath);
-	if (directory && !fs.existsSync(directory)) {
-		fs.mkdirSync(directory, { recursive: true });
-	}
-	fs.appendFileSync(logPath, `${JSON.stringify(record)}\n`, 'utf8');
+        ...entry,
+        timestamp: new Date().toISOString(),
+    };
+    const directory = path.dirname(logPath);
+    if (directory && !fs.existsSync(directory)) {
+        fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
+    }
+    fs.appendFileSync(logPath, `${JSON.stringify(record)}\n`, { encoding: 'utf8', mode: 0o600 });
 }
 
 export function readAuditLog(logPath: string): AuditLogEntry[] {
