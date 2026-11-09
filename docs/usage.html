@@ -98,6 +98,40 @@ async function deployTool() {
 }</code></pre>
       <p>Flags: <code>--min-severity</code> (default <code>medium</code>), <code>--ignore</code>, <code>--config</code>, <code>--tool-decision=deny|ask</code>. Hooks cannot rewrite prompts; keep secrets in the vault and refer to them by ID.</p>
 
+      <h2 id="access">Secure account access for agent harnesses</h2>
+      <p>Let an agent control browser tabs, sign in, enter 2FA codes and call account APIs without ever seeing a credential. The model passes only vault secret IDs. The <code>AccessBroker</code> checks each use against a host-owned policy that names the secret, the origin and the action (<code>fill</code>, <code>header</code> or <code>totp</code>), and only then decrypts the value for your driver. It checks the tab's origin at fill time, blocks http and non-allow-listed navigation, refuses URLs or typed text that carry a secret, and redacts page text and API responses before they return to the model.</p>
+      <pre><code>// access-policy.json
+{
+  "allowedOrigins": ["https://github.com", "https://api.example.com"],
+  "grants": [
+    { "secretId": "github-password", "origins": ["https://github.com"], "actions": ["fill"] },
+    { "secretId": "github-totp",     "origins": ["https://github.com"], "actions": ["totp"] },
+    { "secretId": "example-api-token", "origins": ["https://api.example.com"], "actions": ["header"] }
+  ]
+}</code></pre>
+      <pre><code>import { chromium } from 'playwright';
+import { SecretVault, AccessBroker, SecureBrowser, loadAccessPolicy,
+  createPlaywrightDriver, createSecureBrowserTools } from '@ai-clyde/promptguard';
+
+const vault = await SecretVault.open({ passphrase });
+const broker = new AccessBroker(vault, loadAccessPolicy('access-policy.json'),
+  { auditLogPath: '.prompt-guard/access-audit.jsonl' });
+const context = await (await chromium.launch()).newContext();
+const browser = new SecureBrowser(createPlaywrightDriver(context), broker);
+
+const tab = await browser.openTab('https://github.com/login');
+await browser.login(tab, { usernameSelector: '#login_field', username: 'octocat',
+  passwordSelector: '#password', passwordSecretId: 'github-password',
+  submitSelector: 'input[type=submit]' });
+
+// JSON-Schema tools for any harness (MCP, AI SDK, OpenAI/Anthropic tool calling):
+const tools = createSecureBrowserTools(browser, { vault, broker });
+
+// API access with a stored token; the response body is redacted:
+const res = await broker.authorizedFetch('https://api.example.com/v1/me', { secretId: 'example-api-token' });</code></pre>
+      <p>Tools: <code>browser_list_tabs</code>, <code>browser_open_tab</code>, <code>browser_switch_tab</code>, <code>browser_close_tab</code>, <code>browser_navigate</code>, <code>browser_click</code>, <code>browser_type</code>, <code>browser_fill_secret</code>, <code>browser_fill_totp</code>, <code>browser_read_text</code>, <code>api_request</code>, <code>prompt_guard_vault_catalog</code>. Any browser works through the small <code>BrowserDriver</code> interface; a Playwright adapter is built in.</p>
+      <p class="warning">This is an application-level control. Give the model only these tools for account work: an unrestricted shell or raw browser tool running as the same OS user can bypass it. The policy belongs to the host; never let the model edit it.</p>
+
       <h2>Scan TypeScript text</h2>
       <pre><code>import { scanText } from '@ai-clyde/promptguard';
 

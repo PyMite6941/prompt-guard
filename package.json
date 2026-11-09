@@ -1,7 +1,7 @@
 {
 	"name": "@ai-clyde/promptguard",
-	"version": "1.0.5",
-	"description": "Scan prompts for personally identifiable information and prompt-injection attempts.",
+	"version": "1.1.0",
+	"description": "Scan prompts for PII, secrets and prompt injection, and give AI agents policy-checked browser and account access without exposing credentials.",
 	"main": "./dist/index.js",
 	"types": "./dist/index.d.ts",
 	"exports": {
@@ -15,6 +15,7 @@
 		"dist/",
 		"examples/clean.txt",
 		"examples/leak.txt",
+		"examples/access-policy.json",
 		"LICENSE",
 		"README.md"
 	],
@@ -35,7 +36,11 @@
 		"prompt-injection",
 		"scanner",
 		"secrets",
-		"vault"
+		"vault",
+		"agent",
+		"browser-automation",
+		"credentials",
+		"mcp"
 	],
 	"engines": {
 		"node": ">=18"

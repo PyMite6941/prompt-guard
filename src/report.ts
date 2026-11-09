@@ -251,7 +251,11 @@ export function readAuditLog(logPath: string): AuditLogEntry[] {
 	| '2fa_disable'
 	| 'secret_access'
 	| 'secret_create'
-	| 'secret_delete';
+	| 'secret_delete'
+	| 'secret_use'
+	| 'secret_use_denied'
+	| 'navigation_denied'
+	| 'output_blocked';
 
 	/** A single security audit log entry.
 	* Contains only metadata — never secret values or TOTP secrets.

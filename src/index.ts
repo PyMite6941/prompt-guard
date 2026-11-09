@@ -24,3 +24,23 @@ export { generateHtmlReport,
 	readAuditLog,
 } from './report';
 export type { ReportFile, ReportOptions, AuditLogEntry } from './report';
+export {
+    AccessBroker,
+    loadAccessPolicy,
+    parseAccessPolicy,
+    originMatches,
+    originOf,
+    SECRET_PLACEHOLDER,
+} from './access';
+export type {
+    AccessAction,
+    AccessPolicy,
+    SecretGrant,
+    AccessAuditEvent,
+    AccessBrokerOptions,
+    AccessDecision,
+    AuthorizedFetchOptions,
+    AuthorizedFetchResult,
+} from './access';
+export { SecureBrowser, createSecureBrowserTools, createPlaywrightDriver } from './browser';
+export type { BrowserDriver, TabInfo, LoginOptions, AgentTool } from './browser';

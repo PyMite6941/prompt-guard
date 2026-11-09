@@ -10,16 +10,18 @@ Prompt Guard is a lightweight TypeScript scanner that flags personally identifia
 
 - [What it detects](#what-it-detects)
 - [Requirements](#requirements)
-- [Quick start](#quick-start)
+- [Setup](#setup)
 - [CLI usage](#cli-usage)
 - [Claude Code hook](#claude-code-hook)
+- [Secure account access for agent harnesses](#secure-account-access-for-agent-harnesses)
 - [Programmatic usage](#programmatic-usage)
 - [Local secret vault](#local-secret-vault)
-- [Guarded AI calls (`callAIGuarded`)](#guarded-ai-calls-callaguarded)
-- [Local models — zero API cost](#local-models---zero-api-cost)
+- [Guarded OpenAI calls](#guarded-openai-calls)
+- [Local models](#local-models-zero-api-cost)
 - [Environment variables](#environment-variables)
 - [Options reference](#options-reference)
 - [CI integration](#ci-integration)
+- [Publishing to npm](#publishing-to-npm)
 - [Pre-commit hook](#pre-commit-hook)
 - [Troubleshooting](#troubleshooting)
 - [Development](#development)
@@ -345,7 +347,9 @@ for (const e of events) {
 
 Logged events: `vault_open`, `vault_close`, `2fa_enroll`,
 `2fa_verify_success`, `2fa_verify_failure`, `2fa_lockout`,
-`2fa_disable`, `secret_access`, `secret_create`, `secret_delete`.
+`2fa_disable`, `secret_access`, `secret_create`, `secret_delete`, and, from the
+[access broker](#secure-account-access-for-agent-harnesses), `secret_use`,
+`secret_use_denied`, `navigation_denied`, `output_blocked`.
 
 ## Claude Code hook
 
@@ -394,10 +398,129 @@ secret ID.
 The same logic is available as `evaluateHookInput(rawJson, options)` from
 the package API.
 
-## Programmatic usage
-Import \`scanText\` and \`callAIGuarded\` from the package:
+## Secure account access for agent harnesses
 
-\`\`\`ts
+Agents often need to act in a real browser or call an account's API: open and
+switch tabs, sign in, enter a 2FA code, read a page. Prompt Guard lets a
+harness (Claude Code, the Vercel AI SDK, OpenAI/Anthropic tool calling, an MCP
+server, your own loop) do that **without the model ever seeing a credential**.
+
+```
+model ──tool call (secret ID only)──▶ SecureBrowser / AccessBroker ──policy check──▶ vault.withSecret
+   ▲                                                                                      │
+   └──────── redacted page text / API response ◀──── your BrowserDriver / fetch ◀─────────┘
+```
+
+- **The model only sees IDs.** It discovers them with `prompt_guard_vault_catalog`
+  and passes `secretId` to tools; values are decrypted only inside the broker.
+- **Explicit grants.** Each secret is allowed for specific origins
+  (`https://github.com`, `https://*.example.com`) and actions: `fill` (form
+  field), `header` (HTTP auth header), `totp` (fill the current 2FA code from a
+  stored seed). Everything else is denied.
+- **Origin is checked at use time.** `fillSecret` re-reads the tab's current
+  URL, so a redirect to `github.com.evil.io` can't receive the password.
+  Secrets are never sent to plain-http origins (localhost excepted).
+- **Navigation guard.** Only http(s); http is blocked unless
+  `allowInsecureHttp`; optional `allowedOrigins` allow-list; URLs carrying a
+  credential, a vault value, or a `[PROMPT_GUARD_SECRET:id]` placeholder are
+  refused (no exfiltration through query strings).
+- **No typing secrets.** `browser_type` refuses text containing a raw vault
+  value, so a model that has somehow seen a value can't paste it anywhere.
+- **Redacted output.** Page text, tab titles/URLs and API responses come back
+  with vault values replaced by `[PROMPT_GUARD_SECRET:id]` and detected
+  credentials/PII replaced by `[REDACTED_TYPE]`.
+- **No credential redirects.** `authorizedFetch` uses `redirect: "manual"`, so
+  an auth header is never forwarded to another host.
+- **Audit trail.** Every use and denial is reported to `onAudit` and/or
+  appended to `auditLogPath` (metadata only, never values).
+
+### Access policy
+
+`examples/access-policy.json`:
+
+```json
+{
+  "allowedOrigins": ["https://github.com", "https://*.github.com", "https://api.example.com"],
+  "grants": [
+    { "secretId": "github-password", "origins": ["https://github.com"], "actions": ["fill"] },
+    { "secretId": "github-totp", "origins": ["https://github.com"], "actions": ["totp"] },
+    { "secretId": "example-api-token", "origins": ["https://api.example.com"], "actions": ["header"] }
+  ]
+}
+```
+
+Store the values first with `prompt-guard vault set github-password` etc. A
+TOTP seed is the base32 secret shown when you enable 2FA on the site ("can't
+scan the QR code?"). `*.` matches exactly one subdomain label, never the apex
+domain or deeper subdomains. The policy belongs to the **host**: never let the
+model write or edit it.
+
+### Browser tab control (Playwright example)
+
+Prompt Guard does not ship a browser. Wrap whatever your harness uses in a
+`BrowserDriver` (eight small methods: list/new/activate/close tab, navigate,
+current URL, click, fill, read text), or use the built-in Playwright adapter:
+
+```ts
+import { chromium } from 'playwright';
+import {
+  SecretVault, AccessBroker, SecureBrowser, loadAccessPolicy,
+  createPlaywrightDriver, createSecureBrowserTools,
+} from '@ai-clyde/promptguard';
+
+const vault = await SecretVault.open({ passphrase: await askUserForPassphrase() });
+const broker = new AccessBroker(vault, loadAccessPolicy('access-policy.json'), {
+  auditLogPath: '.prompt-guard/access-audit.jsonl',
+});
+const context = await (await chromium.launch({ headless: false })).newContext();
+const browser = new SecureBrowser(createPlaywrightDriver(context), broker);
+
+// Host code can drive it directly...
+const tab = await browser.openTab('https://github.com/login');
+await browser.login(tab, {
+  usernameSelector: '#login_field', username: 'octocat',
+  passwordSelector: '#password', passwordSecretId: 'github-password',
+  submitSelector: 'input[type=submit]',
+});
+await browser.fillTotp(tab, '#app_totp', 'github-totp');
+
+// ...or hand the model tools. Each has a JSON Schema and an execute()
+// that returns { error } instead of throwing.
+const tools = createSecureBrowserTools(browser, { vault, broker });
+```
+
+Tools: `browser_list_tabs`, `browser_open_tab`, `browser_switch_tab`,
+`browser_close_tab`, `browser_navigate`, `browser_click`, `browser_type`,
+`browser_fill_secret`, `browser_fill_totp`, `browser_read_text`,
+`api_request` (when a broker is passed) and `prompt_guard_vault_catalog`
+(when a vault is passed). Register them with your harness, for example
+`tool({ description, inputSchema: jsonSchema(t.inputSchema), execute: t.execute })`
+in the AI SDK, or as MCP tools.
+
+### API access with a stored token
+
+```ts
+const res = await broker.authorizedFetch('https://api.example.com/v1/me', {
+  secretId: 'example-api-token',
+  scheme: 'bearer',        // or 'token', or { header: 'X-API-Key' }
+});
+console.log(res.status, res.body); // body is redacted
+```
+
+### Limits
+
+This is an application-level control. A model that also has an unrestricted
+shell, file access to the vault, or a raw browser tool running as the same OS
+user can go around it, so give the model **only** these tools for account
+work. Combine them with the [Claude Code hook](#claude-code-hook) and the
+harness's own tool allow-lists. Redaction is pattern-based plus exact
+vault-value matching. It will not catch a secret the site transforms (for
+example, shows only partly).
+
+## Programmatic usage
+Import `scanText` and `callAIGuarded` from the package:
+
+```ts
 import { scanText, callAIGuarded } from '@ai-clyde/promptguard';
 
 const result = scanText(userPrompt);
@@ -408,18 +531,18 @@ if (!result.isSafe) {
 } else {
   // Safe to continue according to the configured pattern checks.
 }
-\`\`\`
+```
 
-\`scanText\` returns:
+`scanText` returns:
 
-- \`isSafe\`: \`true\` when no configured pattern matched.
-- \`matches\`: detected match types and values.
-- \`sanitizedText\`: input with detected PII replaced by redaction markers.
+- `isSafe`: `true` when no configured pattern matched.
+- `matches`: detected match types and values.
+- `sanitizedText`: input with detected PII replaced by redaction markers.
 
-Injection phrases are included in \`matches\` but are not redacted from
-\`sanitizedText\`. Handle them according to your application's policy. The
-\`callAIGuarded\` helper blocks prompts with detected injection phrases even when
-\`autoSanitize\` is enabled; that option only redacts PII.
+Injection phrases are included in `matches` but are not redacted from
+`sanitizedText`. Handle them according to your application's policy. The
+`callAIGuarded` helper blocks prompts with detected injection phrases even when
+`autoSanitize` is enabled; that option only redacts PII.
 
 ## Guarded OpenAI calls
 The optional `callAIGuarded` helper checks and sends a prompt to an AI model (default: OpenAI). Set `OPENAI_API_KEY` in the environment before importing or calling it. You can also override the API key and base URL via options to use OpenAI-compatible endpoints.

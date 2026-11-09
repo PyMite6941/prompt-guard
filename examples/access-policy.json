@@ -1,0 +1,8 @@
+{
+  "allowedOrigins": ["https://github.com", "https://*.github.com", "https://api.example.com"],
+  "grants": [
+    { "secretId": "github-password", "origins": ["https://github.com"], "actions": ["fill"] },
+    { "secretId": "github-totp", "origins": ["https://github.com"], "actions": ["totp"] },
+    { "secretId": "example-api-token", "origins": ["https://api.example.com"], "actions": ["header"] }
+  ]
+}
