@@ -659,35 +659,25 @@ jobs:
 
 ## Publishing to npm
 
-The npm release workflow publishes `@ai-clyde/promptguard` from a version tag. It installs dependencies, builds, runs the test suite, verifies the tag matches `package.json`, checks npm credentials, then publishes with public access. `npm pack --dry-run` previews package contents; the allowlist excludes local vault files and unlisted examples.
+Publishing is automatic. On every push to `master`, `.github/workflows/publish.yml` checks whether the `package.json` version is already on npm. If it is not, the workflow installs, builds, runs the tests, publishes `@ai-clyde/promptguard` with provenance, then creates the matching `vX.Y.Z` tag and GitHub Release. Pushes that don't change the version do nothing. `npm pack --dry-run` previews package contents; the allowlist excludes local vault files and unlisted examples.
 
-### Set up the npm token
+### One-time setup: npm trusted publishing
 
-1. Create an npm granular access token with **Read and write** package permissions for `@ai-clyde/promptguard`. Its owner must be allowed to publish under the `@ai-clyde` scope.
-2. Add the token to the GitHub repository as the Actions secret `NPM_TOKEN` (Settings → Secrets and variables → Actions → New repository secret). The workflow checks the token with `npm whoami` before publishing.
-3. Keep the token secret; never add it to `.env`, source, or workflow files.
+The workflow authenticates with OIDC, so there is no `NPM_TOKEN` secret and no OTP. On npmjs.com open the package → **Settings → Trusted Publisher** → GitHub Actions, and enter:
+
+- Organization or user: `PyMite6941`
+- Repository: `prompt-guard`
+- Workflow filename: `publish.yml`
 
 ### Release a new version
 
-Review the tarball before release:
-
 ```sh
-npm pack --dry-run
-npm test
-npm run build
+npm pack --dry-run          # optional: review the tarball
+npm version patch           # or minor / major — bumps package.json + package-lock.json
+git push origin master      # the workflow publishes, tags, and releases
 ```
 
-Commit and push all intended release changes, then push a tag matching the version in both `package.json` and `package-lock.json`:
-
-```sh
-git add <intended-release-files>
-git commit -m "chore: release v1.0.4"
-git push origin master
-git tag v1.0.4
-git push origin v1.0.3
-```
-
-Version `1.0.2` is already published to npm, so do not reuse its version number. The next prepared version is `1.0.3`. Pushing its matching tag triggers the workflow; publishing fails before upload if the tag, package version, or npm credentials do not match.
+`npm version` creates a local tag as well; you don't need to push it, because the workflow creates the tag on GitHub. The workflow can also be re-run by hand from the Actions tab (`workflow_dispatch`).
 
 ---
 
