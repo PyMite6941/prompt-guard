@@ -42,5 +42,7 @@ export type {
     AuthorizedFetchOptions,
     AuthorizedFetchResult,
 } from './access';
-export { SecureBrowser, createSecureBrowserTools, createPlaywrightDriver } from './browser';
+export { SecureBrowser, createSecureBrowserTools, createPlaywrightDriver, createPuppeteerDriver } from './browser';
+export { runMcpServer, setupMcp, getDefaultPolicyPath, STARTER_POLICY } from './mcp';
+export type { McpServerOptions, SetupResult } from './mcp';
 export type { BrowserDriver, TabInfo, LoginOptions, AgentTool } from './browser';

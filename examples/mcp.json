@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "prompt-guard": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@ai-clyde/promptguard",
+        "mcp"
+      ]
+    }
+  }
+}

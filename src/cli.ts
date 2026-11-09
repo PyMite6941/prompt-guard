@@ -366,6 +366,36 @@ async function runConfigCommand(args: string[]): Promise<void> {
     process.exitCode = 1;
 }
 
+async function runMcpCommand(args: string[]): Promise<void> {
+    const { runMcpServer, setupMcp, displayPath } = await import('./mcp.js');
+    const value = (name: string) => args.find((a) => a.startsWith(`--${name}=`))?.slice(name.length + 3);
+    if (args[0] === 'setup') {
+        const scope = value('scope') === 'user' ? 'user' : 'project';
+        const policy = value('policy');
+        const result = setupMcp(policy ? { scope, policyPath: policy } : { scope });
+        console.log(`${result.policyCreated ? 'Created' : 'Kept existing'} access policy: ${displayPath(result.policyPath)}`);
+        if (result.mcpJsonPath) console.log(`Registered "prompt-guard" in ${result.mcpJsonPath}`);
+        else console.log(`Register it for all projects with:\n  ${result.claudeCommand}`);
+        console.log(
+            '\nNext steps:\n' +
+                '  1. Store credentials:   prompt-guard vault set github-password\n' +
+                '  2. Edit the policy so each secret ID is granted only the origins and actions it needs.\n' +
+                '  3. Install a browser:   npm i -g playwright && npx playwright install chromium\n' +
+                '  4. Restart your MCP client. The vault unlocks through a native password dialog on first use.',
+        );
+        return;
+    }
+    const browser = value('browser');
+    const options: Parameters<typeof runMcpServer>[0] = {};
+    const policy = value('policy');
+    const profile = value('profile');
+    if (policy) options.policyPath = policy;
+    if (profile) options.profileDir = profile;
+    if (browser === 'puppeteer' || browser === 'playwright') options.browser = browser;
+    if (args.includes('--headless')) options.headless = true;
+    await runMcpServer(options);
+}
+
 async function main(): Promise<void> {
     const args = process.argv.slice(2);
     if (args.includes('--help') || args.includes('-h')) {
@@ -374,8 +404,14 @@ async function main(): Promise<void> {
                 '       [--exclude=path,...] excludes paths relative to the scan root\n' +
                 '       prompt-guard vault <set|list|delete|catalog|capture|export|import|popup> ...\n' +
                 '       prompt-guard hook [--ignore=type,...] [--min-severity=level]\n' +
+                '       prompt-guard mcp [--policy=file] [--browser=playwright|puppeteer] [--headless] [--profile=dir]\n' +
+                '       prompt-guard mcp setup [--scope=project|user] [--policy=file]\n' +
                 '       prompt-guard config --check [--config=file]',
         );
+        return;
+    }
+    if (args[0] === 'mcp') {
+        await runMcpCommand(args.slice(1));
         return;
     }
     if (args[0] === 'vault') {

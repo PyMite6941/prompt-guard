@@ -459,7 +459,8 @@ model write or edit it.
 
 Prompt Guard does not ship a browser. Wrap whatever your harness uses in a
 `BrowserDriver` (eight small methods: list/new/activate/close tab, navigate,
-current URL, click, fill, read text), or use the built-in Playwright adapter:
+current URL, click, fill, read text), or use a built-in adapter:
+`createPlaywrightDriver(context)` or `createPuppeteerDriver(browser)`:
 
 ```ts
 import { chromium } from 'playwright';
@@ -496,6 +497,43 @@ Tools: `browser_list_tabs`, `browser_open_tab`, `browser_switch_tab`,
 (when a vault is passed). Register them with your harness, for example
 `tool({ description, inputSchema: jsonSchema(t.inputSchema), execute: t.execute })`
 in the AI SDK, or as MCP tools.
+
+### MCP server (Claude Code, Claude Desktop, Cursor, VS Code)
+
+`prompt-guard mcp` runs all of the tools above as a zero-dependency MCP
+server over stdio. One-time setup:
+
+```sh
+npm i -g @ai-clyde/promptguard playwright      # or puppeteer
+npx playwright install chromium
+prompt-guard vault set github-password         # store credentials (no echo)
+prompt-guard vault set github-totp             # optional: 2FA seed
+prompt-guard mcp setup                         # starter policy + ./.mcp.json
+```
+
+`mcp setup` creates a starter access policy next to the vault (it keeps an
+existing one) and registers the server in the current project's `.mcp.json`
+without touching other servers. Use `prompt-guard mcp setup --scope=user` to
+get the `claude mcp add` command that registers it for every project. Other
+clients take the same entry (see `examples/mcp.json`):
+
+```json
+{ "mcpServers": { "prompt-guard": { "command": "npx", "args": ["-y", "@ai-clyde/promptguard", "mcp"] } } }
+```
+
+Server flags: `--policy=file` (default: `access-policy.json` beside the
+vault), `--browser=playwright|puppeteer` (default Playwright, Chromium),
+`--headless`, `--profile=dir` (a persistent profile, so sign-ins survive
+restarts; defaults to `browser-profile/` beside the vault).
+
+**Unlocking:** stdin/stdout carry the MCP protocol, so the passphrase is never
+read from them or from the model. On the first tool call the server shows a
+native password dialog (Windows credential prompt, macOS dialog, or Linux
+`zenity`), and a second one for the 2FA code if the vault has 2FA. For
+headless machines, set `PROMPT_GUARD_PASSPHRASE_CMD` to a command that prints
+the passphrase, for example `op read op://Private/prompt-guard/password`. The
+browser only launches when a browser tool is first used. Access events are
+written to `access-audit.jsonl` beside the vault.
 
 ### API access with a stored token
 

@@ -130,6 +130,14 @@ const tools = createSecureBrowserTools(browser, { vault, broker });
 // API access with a stored token; the response body is redacted:
 const res = await broker.authorizedFetch('https://api.example.com/v1/me', { secretId: 'example-api-token' });</code></pre>
       <p>Tools: <code>browser_list_tabs</code>, <code>browser_open_tab</code>, <code>browser_switch_tab</code>, <code>browser_close_tab</code>, <code>browser_navigate</code>, <code>browser_click</code>, <code>browser_type</code>, <code>browser_fill_secret</code>, <code>browser_fill_totp</code>, <code>browser_read_text</code>, <code>api_request</code>, <code>prompt_guard_vault_catalog</code>. Any browser works through the small <code>BrowserDriver</code> interface; a Playwright adapter is built in.</p>
+      <h3 id="mcp">MCP server</h3>
+      <p>Run every tool as a zero-dependency MCP server for Claude Code, Claude Desktop, Cursor or VS Code:</p>
+      <pre><code>npm i -g @ai-clyde/promptguard playwright
+npx playwright install chromium
+prompt-guard vault set github-password
+prompt-guard mcp setup               # starter policy + ./.mcp.json
+prompt-guard mcp setup --scope=user  # prints the "claude mcp add" command</code></pre>
+      <p>Flags: <code>--policy=file</code>, <code>--browser=playwright|puppeteer</code>, <code>--headless</code>, <code>--profile=dir</code>. On first use the vault unlocks through a native password dialog, never through the model or MCP traffic. On headless machines, set <code>PROMPT_GUARD_PASSPHRASE_CMD</code> to a password-manager command that prints the passphrase. The browser launches only when a browser tool is used.</p>
       <p class="warning">This is an application-level control. Give the model only these tools for account work: an unrestricted shell or raw browser tool running as the same OS user can bypass it. The policy belongs to the host; never let the model edit it.</p>
 
       <h2>Scan TypeScript text</h2>

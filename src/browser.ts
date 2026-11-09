@@ -338,3 +338,60 @@ export function createPlaywrightDriver(context: PlaywrightContextLike): BrowserD
         readText: (tabId) => page(tabId).innerText('body'),
     };
 }
+
+// ---------------------------------------------------------------------------
+// Puppeteer adapter (structural types — Puppeteer is not a dependency)
+// ---------------------------------------------------------------------------
+
+interface PuppeteerPageLike {
+    url(): string;
+    title(): Promise<string>;
+    goto(url: string): Promise<unknown>;
+    bringToFront(): Promise<void>;
+    close(): Promise<void>;
+    click(selector: string): Promise<void>;
+    locator(selector: string): { fill(value: string): Promise<void> };
+    evaluate(expression: string): Promise<unknown>;
+}
+
+interface PuppeteerBrowserLike {
+    pages(): Promise<PuppeteerPageLike[]>;
+    newPage(): Promise<PuppeteerPageLike>;
+}
+
+/** Wraps a Puppeteer Browser (v21+) as a BrowserDriver. Tab IDs are stable per page. */
+export function createPuppeteerDriver(browser: PuppeteerBrowserLike): BrowserDriver {
+    const ids = new WeakMap<PuppeteerPageLike, string>();
+    let next = 1;
+    const idOf = (p: PuppeteerPageLike): string => {
+        let id = ids.get(p);
+        if (!id) {
+            id = `tab-${next++}`;
+            ids.set(p, id);
+        }
+        return id;
+    };
+    const page = async (tabId: string): Promise<PuppeteerPageLike> => {
+        const found = (await browser.pages()).find((p) => idOf(p) === tabId);
+        if (!found) throw new Error(`Tab "${tabId}" is not open.`);
+        return found;
+    };
+    return {
+        listTabs: async () =>
+            Promise.all((await browser.pages()).map(async (p) => ({ id: idOf(p), url: p.url(), title: await p.title() }))),
+        newTab: async (url) => {
+            const p = await browser.newPage();
+            if (url) await p.goto(url);
+            return idOf(p);
+        },
+        activateTab: async (tabId) => (await page(tabId)).bringToFront(),
+        closeTab: async (tabId) => (await page(tabId)).close(),
+        navigate: async (tabId, url) => {
+            await (await page(tabId)).goto(url);
+        },
+        currentUrl: async (tabId) => (await page(tabId)).url(),
+        click: async (tabId, selector) => (await page(tabId)).click(selector),
+        fill: async (tabId, selector, value) => (await page(tabId)).locator(selector).fill(value),
+        readText: async (tabId) => String((await (await page(tabId)).evaluate('document.body.innerText')) ?? ''),
+    };
+}

@@ -16,6 +16,7 @@
 		"examples/clean.txt",
 		"examples/leak.txt",
 		"examples/access-policy.json",
+		"examples/mcp.json",
 		"LICENSE",
 		"README.md"
 	],
@@ -58,6 +59,18 @@
 		"access": "public"
 	},
 	"type": "commonjs",
+	"peerDependencies": {
+		"playwright": ">=1.40.0",
+		"puppeteer": ">=21.0.0"
+	},
+	"peerDependenciesMeta": {
+		"playwright": {
+			"optional": true
+		},
+		"puppeteer": {
+			"optional": true
+		}
+	},
 	"devDependencies": {
 		"@types/blessed": "^0.1.27",
 		"@types/node": "^26.6.5",
