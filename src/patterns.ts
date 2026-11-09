@@ -99,8 +99,19 @@ export const PII_PATTERNS: Record<string, Piipattern> = {
 };
 
 export const INJECTION_PATTERNS: Array<{ pattern: RegExp; severity: Severity }> = [
-	{ pattern: /ignore previous instructions/i, severity: 'critical' },
-	{ pattern: /disregard previous instructions/i, severity: 'critical' },
+	// "ignore previous instructions" plus filler/quantifier variants:
+	// "ignore ALL previous instructions", "disregard all of the prior rules",
+	// "forget your earlier directions", "override the above system prompt"...
+	{
+		pattern:
+			/\b(?:ignore|disregard|forget|override)\s+(?:(?:all|any|every|each|of|the|your|my|these|those|that|this)\s+)*(?:previous|prior|preceding|above|earlier|former|original|initial)\s+(?:system\s+)?(?:instructions?|prompts?|rules|directions|directives|guidelines|commands|context|messages?)\b/i,
+		severity: 'critical',
+	},
+	// "ignore everything above", "forget all of the above", "disregard everything before this"
+	{
+		pattern: /\b(?:ignore|disregard|forget)\s+(?:everything|(?:all\s+)?(?:of\s+)?the)\s+(?:above|before\s+this|prior|preceding)\b/i,
+		severity: 'critical',
+	},
 	{ pattern: /system prompt/i, severity: 'high' },
 	{ pattern: /you are now unbound/i, severity: 'high' },
 	{ pattern: /you are now (in developer mode|DAN|do anything now)/i, severity: 'high' },
