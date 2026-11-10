@@ -80,6 +80,6 @@
 	"dependencies": {
 		"blessed": "^0.1.81",
 		"dotenv": "^16.4.5",
-		"openai": "^7.33.0"
+		"openai": "^7.53.0"
 	}
 }
